@@ -123,18 +123,25 @@ struct rdp_context
     ALIGN64 BOOL          ServerMode;  /* TRUE when operating as a server */
     ALIGN64 UINT32        LastError;
 
-    ALIGN64 int    argc;               /* saved command-line argument count */
-    ALIGN64 char** argv;               /* saved command-line arguments */
+    ALIGN64 int      argc;             /* saved command-line argument count */
+    ALIGN64 char**   argv;             /* saved command-line arguments */
+    ALIGN64 wPubSub* pubSub;           /* pub/sub event bus */
 
     ALIGN64 rdpRdp*        rdp;        /* internal RDP engine */
     ALIGN64 rdpGdi*        gdi;        /* GDI rendering surface */
-    ALIGN64 rdpSettings*   settings;   /* connection settings (owned by rdpRdp) */
+    ALIGN64 rdpRail*       rail;       /* RemoteApp/RAIL state */
+    ALIGN64 rdpCache*      cache;      /* bitmap/glyph cache */
     ALIGN64 rdpChannels*   channels;   /* virtual channel manager */
-    ALIGN64 rdpInput*      input;      /* input injection interface */
-    ALIGN64 rdpUpdate*     update;     /* display update callbacks */
+    ALIGN64 rdpGraphics*   graphics;   /* graphics registration */
+    ALIGN64 rdpInput*      input;      /* input injection interface (owned by rdpRdp) */
+    ALIGN64 rdpUpdate*     update;     /* display update callbacks (owned by rdpRdp) */
+    ALIGN64 rdpSettings*   settings;   /* connection settings (owned by rdpRdp) */
+    ALIGN64 rdpMetrics*    metrics;    /* connection metrics */
     ALIGN64 rdpCodecs*     codecs;     /* codec negotiation state */
-    ALIGN64 rdpAutoDetect* autodetect; /* bandwidth/RTT auto-detection */
-    ALIGN64 wLog*          log;        /* per-connection WLog logger */
+    ALIGN64 rdpAutoDetect* autodetect; /* bandwidth/RTT auto-detection (owned by rdpRdp) */
+
+    ALIGN64 rdpStreamDumpContext* dump; /* stream capture/replay context */
+    ALIGN64 wLog*                 log;  /* per-connection WLog logger */
 };
 ```
 
@@ -159,6 +166,10 @@ struct rdp_client_context
 {
     rdpContext  context;          /* embedded base context — MUST be first */
     ALIGN64 HANDLE thread;        /* client worker thread handle */
+
+    /* Channel context pointers populated after the corresponding channel connects */
+    /* (conditional on build-time CHANNEL_* defines) */
+
     ALIGN64 INT32  lastX;         /* last known pointer X position */
     ALIGN64 INT32  lastY;         /* last known pointer Y position */
     ALIGN64 BOOL   mouse_grabbed; /* whether the pointer is currently captured */
@@ -186,7 +197,7 @@ typedef void (*pContextFree)(freerdp* instance, rdpContext* context);
 /* Called before the TCP/TLS handshake; used to apply final settings */
 typedef BOOL (*pConnectCallback)(freerdp* instance);  /* also PostConnect, Redirect */
 
-/* Called after disconnect, before channels are torn down */
+/* Called before disconnect and channel teardown; cleans up PostConnect resources */
 typedef void (*pPostDisconnect)(freerdp* instance);
 ```
 

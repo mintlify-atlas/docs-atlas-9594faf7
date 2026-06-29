@@ -1,5 +1,5 @@
 ---
-title: "FreeRDP Complete Virtual Channels Reference Guide"
+title: "FreeRDP Virtual Channels: Complete Reference Guide"
 sidebarTitle: "Virtual Channels"
 description: "Full reference of all virtual channel plugins in FreeRDP, organized by category with folder names, MS spec references, and descriptions."
 ---
@@ -154,7 +154,7 @@ Device redirection channels allow local client peripherals to appear inside the 
 | Folder | Common Name | Type | MS Spec | Description |
 |--------|-------------|------|---------|-------------|
 | `rdpear` | Authentication Redirection Virtual Channel Extension | Dynamic | [MS-RDPEAR] | Forwards authentication credentials and tokens from the client to the server, supporting advanced authentication redirection scenarios including Kerberos credential forwarding. |
-| `rdpewa` | WebAuthn Virtual Channel Extension | Dynamic | [MS-RDPEWA] | Forwards WebAuthn/FIDO2 authenticator requests from the remote session to locally attached security keys (hardware tokens, passkeys). Requires `libcbor` and `libfido2`. Enabled automatically when libraries are detected; disable with `-DCHANNEL_RDPEWA=OFF`. |
+| `rdpewa` | WebAuthn Virtual Channel Extension | Dynamic | [MS-RDPEWA] | Forwards WebAuthn/FIDO2 authenticator requests from the remote session to locally attached security keys (hardware tokens, passkeys). Requires `libcbor` and `libfido2`. Disabled by default; enable with `-DCHANNEL_RDPEWA=ON`. |
 | `sshagent` | SSH Agent Forwarding | Dynamic | — | **Experimental.** Forwards SSH agent requests from the remote session to the client's SSH agent socket, enabling SSH key-based authentication from within the RDP session. Disabled by default. |
 
 ---
@@ -166,5 +166,5 @@ Device redirection channels allow local client peripherals to appear inside the 
 | `telemetry` | Telemetry Virtual Channel Extension | Dynamic | [MS-RDPET] | Carries diagnostic and telemetry data from the client to the server for session quality and error reporting. |
 
 <Note>
-  The `client/` and `server/` subdirectories under `channels/` contain shared channel infrastructure (helpers, common code) rather than individual channel implementations. The `drdynvc` channel is not listed in the per-category tables above but is a hard prerequisite for all dynamic channels.
+  The `client/` and `server/` subdirectories under `channels/` contain shared channel infrastructure (helpers, common code) rather than individual channel implementations. The `drdynvc` channel is listed in the Infrastructure table above and is a hard prerequisite for all dynamic channels.
 </Note>

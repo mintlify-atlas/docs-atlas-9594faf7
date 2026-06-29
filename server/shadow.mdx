@@ -15,47 +15,74 @@ The shadow server is structured around three layers: a platform-independent core
 
 struct rdp_shadow_server
 {
+    void*                 ext;
+    HANDLE                thread;
+    HANDLE                StopEvent;
     wArrayList*           clients;        /* list of rdpShadowClient* */
-    rdpShadowSubsystem*   subsystem;      /* platform capture backend */
+    rdpSettings*          settings;
     rdpShadowScreen*      screen;
     rdpShadowSurface*     surface;        /* current framebuffer */
+    rdpShadowSurface*     lobby;
     rdpShadowCapture*     capture;
-    freerdp_listener*     listener;
+    rdpShadowSubsystem*   subsystem;      /* platform capture backend */
 
     DWORD  port;
     BOOL   mayView;       /* allow clients to view the desktop */
     BOOL   mayInteract;   /* allow clients to send input */
+    BOOL   shareSubRect;
     BOOL   authentication;
     UINT32 selectedMonitor;
+    RECTANGLE_16 subRect;
 
     /* Codec settings */
+    RLGR_MODE rfxMode;     /* unused */
     H264_RATECONTROL_MODE h264RateControlMode;
     UINT32 h264BitRate;
     UINT32 h264FrameRate;
     UINT32 h264QP;
 
-    size_t maxClientsConnected;
+    char*  ipcSocket;
+    char*  ConfigPath;
     char*  CertificateFile;
     char*  PrivateKeyFile;
+    CRITICAL_SECTION lock;
+    freerdp_listener* listener;
+
+    size_t maxClientsConnected;
 };
 
 struct rdp_shadow_client
 {
     rdpContext          context;
+
     HANDLE              thread;
     BOOL                activated;
+    BOOL                first_frame;
+    BOOL                inLobby;
     BOOL                mayView;
     BOOL                mayInteract;
+    BOOL                suppressOutput;
+    UINT16              surfaceId;
+    wMessageQueue*      MsgQueue;
+    CRITICAL_SECTION    lock;
+    REGION16            invalidRegion;
+    rdpShadowServer*    server;
+    rdpShadowEncoder*   encoder;
+    rdpShadowSubsystem* subsystem;
+
+    UINT32              pointerX;
+    UINT32              pointerY;
+
+    HANDLE              vcm;
 
     /* Virtual channel server contexts */
     EncomspServerContext*  encomsp;   /* multiparty */
     RemdeskServerContext*  remdesk;   /* remote assistance */
     RdpsndServerContext*   rdpsnd;    /* audio output */
+#if defined(CHANNEL_AUDIN_SERVER)
     audin_server_context*  audin;     /* audio input */
+#endif
     RdpgfxServerContext*   rdpgfx;    /* GFX pipeline */
-
-    rdpShadowServer*    server;
-    rdpShadowEncoder*   encoder;
 };
 ```
 
@@ -82,26 +109,41 @@ The subsystem also receives input events forwarded from connected clients:
 struct rdp_shadow_subsystem
 {
     RDP_SHADOW_ENTRY_POINTS ep;
-
+    HANDLE  event;
     UINT32  numMonitors;
     UINT32  captureFrameRate;
+    UINT32  selectedMonitor;
     MONITOR_DEF monitors[16];
     MONITOR_DEF virtualScreen;
 
     rdpShadowMultiClientEvent* updateEvent; /* signals frame availability */
 
+    wMessagePipe* MsgPipe;
+    UINT32  pointerX;
+    UINT32  pointerY;
+
+    AUDIO_FORMAT* rdpsndFormats;
+    size_t        nRdpsndFormats;
+    AUDIO_FORMAT* audinFormats;
+    size_t        nAudinFormats;
+
     /* Input callbacks invoked for each connected client */
+    pfnShadowSynchronizeEvent     SynchronizeEvent;
     pfnShadowKeyboardEvent        KeyboardEvent;
     pfnShadowUnicodeKeyboardEvent UnicodeKeyboardEvent;
     pfnShadowMouseEvent           MouseEvent;
-    pfnShadowRelMouseEvent        RelMouseEvent;
     pfnShadowExtendedMouseEvent   ExtendedMouseEvent;
-    pfnShadowSynchronizeEvent     SynchronizeEvent;
+    pfnShadowChannelAudinServerReceiveSamples AudinServerReceiveSamples;
 
     /* Authentication hook */
     pfnShadowAuthenticate         Authenticate;
     pfnShadowClientConnect        ClientConnect;
     pfnShadowClientDisconnect     ClientDisconnect;
+    pfnShadowClientCapabilities   ClientCapabilities;
+
+    rdpShadowServer* server;
+
+    pfnShadowRelMouseEvent        RelMouseEvent; /* since version 3.15.0 */
 };
 ```
 

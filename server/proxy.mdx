@@ -140,7 +140,6 @@ struct proxy_config
     char*   TargetUser;
     char*   TargetDomain;
     char*   TargetPassword;
-    UINT32  TargetTlsSecLevel;
 
     /* [Input] */
     BOOL    Keyboard;
@@ -174,15 +173,31 @@ struct proxy_config
     char**  Intercept;
     size_t  InterceptCount;
 
-    /* [Codecs] */
-    BOOL    RFX;
-    BOOL    NSC;
-
     /* [Plugins] */
     char**  Modules;
     size_t  ModulesCount;
     char**  RequiredPlugins;
     size_t  RequiredPluginsCount;
+
+    char*   CertificateFile;
+    char*   CertificateContent;
+    char*   PrivateKeyFile;
+    char*   PrivateKeyContent;
+
+    /* [Target] continued */
+    UINT32  TargetTlsSecLevel;  /* since version 3.2.0 */
+
+    /* [Codecs] */
+    BOOL    RFX;   /* since version 3.24.0 */
+    BOOL    NSC;   /* since version 3.24.0 */
+
+    /* [Server] */
+    char*   SamFile;            /* since version 3.25.0 */
+
+    /* [Target] smartcard */
+    BOOL    TargetSmartcardAuth;   /* since version 3.25.0 */
+    char*   TargetSmartcardCert;
+    char*   TargetSmartcardKey;
 };
 ```
 
@@ -215,7 +230,7 @@ Proxy module shared libraries must be installed into `<prefix>/lib/freerdp3/prox
 ## Running the Proxy
 
 ```bash
-freerdp-proxy --config /etc/freerdp/proxy.ini
+freerdp-proxy /etc/freerdp/proxy.ini
 ```
 
 ## Writing a Proxy Module
@@ -249,6 +264,7 @@ struct proxy_plugin
     proxyHookFn ClientLoginFailure;
     proxyHookFn ClientEndPaint;
     proxyHookFn ClientRedirect;
+    proxyHookFn ClientLoadChannels;
 
     /* ── Server-side hooks ────────────────────────────────── */
     proxyHookFn ServerPostConnect;
@@ -262,13 +278,14 @@ struct proxy_plugin
     /* ── Filters (return FALSE to drop) ──────────────────── */
     proxyFilterFn KeyboardEvent;
     proxyFilterFn MouseEvent;
+    proxyFilterFn ClientChannelData;      /* static channel, client→server */
+    proxyFilterFn ServerChannelData;      /* static channel, server→client */
+    proxyFilterFn DynamicChannelCreate;   /* passthrough dyn-channel create */
+    proxyFilterFn ServerFetchTargetAddr;  /* resolve dynamic target */
+    proxyFilterFn ServerPeerLogon;
+    proxyFilterFn ChannelCreate;          /* passthrough drdynvc channel create */
     proxyFilterFn UnicodeEvent;
     proxyFilterFn MouseExEvent;
-    proxyFilterFn ClientChannelData;   /* static channel, client→server */
-    proxyFilterFn ServerChannelData;   /* static channel, server→client */
-    proxyFilterFn DynamicChannelCreate;
-    proxyFilterFn ServerFetchTargetAddr; /* resolve dynamic target */
-    proxyFilterFn ServerPeerLogon;
     proxyFilterFn DynChannelToIntercept;
     proxyFilterFn DynChannelIntercept;
     proxyFilterFn StaticChannelToIntercept;

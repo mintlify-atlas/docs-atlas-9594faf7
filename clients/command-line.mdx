@@ -31,7 +31,7 @@ client [file.rdp] [/option:value] [+bool-option] [-bool-option] [/flag]
 </ParamField>
 
 <ParamField path="/u" type="string">
-  Username. Accepts `DOMAIN\user`, `user@domain`, or bare `user`.
+  Username. Accepts `DOMAIN\\user`, `user@domain`, or bare `user`.
 
   ```bash
   xfreerdp /v:rdp.example.com /u:alice
@@ -149,7 +149,7 @@ client [file.rdp] [/option:value] [+bool-option] [-bool-option] [/flag]
 </ParamField>
 
 <ParamField path="/window-position" type="string">
-  Initial window position as `<x>x<y>`.
+  Initial window position as `<xpos>x<ypos>`.
 </ParamField>
 
 ---
@@ -625,16 +625,29 @@ FREERDP_API BOOL freerdp_client_print_buildconfig(void);
 /* Print all command-line help */
 FREERDP_API BOOL freerdp_client_print_command_line_help(int argc, char** argv);
 
+/* Print all command-line help, including any custom arguments */
+FREERDP_API BOOL freerdp_client_print_command_line_help_ex(
+    int argc, char** argv, const COMMAND_LINE_ARGUMENT_A* custom);
+
 /* Handle the status code returned by parse functions and print
    appropriate help/version output */
+WINPR_ATTR_NODISCARD
 FREERDP_API int freerdp_client_settings_command_line_status_print(
     rdpSettings* settings, int status, int argc, char** argv);
 
+/* Extended status print that also accepts a custom argument table */
+WINPR_ATTR_NODISCARD
+FREERDP_API int freerdp_client_settings_command_line_status_print_ex(
+    rdpSettings* settings, int status, int argc, char** argv,
+    const COMMAND_LINE_ARGUMENT_A* custom);
+
 /* Parse "domain\user" or "user@domain" into separate strings */
+WINPR_ATTR_NODISCARD
 FREERDP_API BOOL freerdp_parse_username(
     const char* username, char** user, char** domain);
 
 /* Parse "hostname[:port]" into separate host and port */
+WINPR_ATTR_NODISCARD
 FREERDP_API BOOL freerdp_parse_hostname(
     const char* hostname, char** host, int* port);
 ```

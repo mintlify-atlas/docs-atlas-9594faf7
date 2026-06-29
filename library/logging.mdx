@@ -62,9 +62,8 @@ WLOG_PREFIX="pid=%pid:tid=%tid:fn=%fn -" \
 xfreerdp /v:rdp.example.com
 
 # Trace only the clipboard and GFX channels, silence everything else
-WLOG_LEVEL=OFF \
+WLOG_LEVEL=TRACE \
 WLOG_FILTER="com.freerdp.client.channels.cliprdr,com.freerdp.client.channels.rdpgfx" \
-WLOG_FILTER_LEVEL=TRACE \
 xfreerdp /v:rdp.example.com
 
 # Write all output to a file

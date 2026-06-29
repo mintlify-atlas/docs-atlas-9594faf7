@@ -100,6 +100,12 @@ FreeRDP supports multiple authentication modes negotiated during the RDP connect
   RC4, MD4, and MD5 can be provided by FreeRDP's built-in implementations when the system SSL library no longer includes them (`-DWITH_INTERNAL_RC4=ON`, `-DWITH_INTERNAL_MD4=ON`, `-DWITH_INTERNAL_MD5=ON`).
 </Accordion>
 
+<Accordion title="Smartcard PIN — Smart Card NLA Authentication">
+  **Security level: High**
+
+  `AUTH_SMARTCARD_PIN` is triggered when NLA authentication requires a smart card PIN prompt. The user is prompted for their smart card PIN locally; the credential is used by CredSSP/SSPI without exposing a password. Requires `-DWITH_PCSC=ON` and/or `-DWITH_PKCS11=ON` at build time.
+</Accordion>
+
 <Accordion title="RDSTLS — Restricted Admin / Protected Users">
   **Security level: High (specific scenarios)**
 

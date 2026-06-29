@@ -31,7 +31,7 @@ cmake --build build --target install
 | `WITH_CLIENT` | `ON` | Build client binaries. Depends on `WITH_CLIENT_COMMON`. |
 | `WITH_CLIENT_SDL` | `ON` | Build the SDL2/SDL3-based cross-platform client (`sdlfreerdp`). Depends on `WITH_CLIENT`. |
 | `WITH_X11` | Auto | Build the X11 client (`xfreerdp`) and X11 server support. Auto-detected on non-Windows, non-macOS, non-Android platforms. Disable with `-DWITH_X11=OFF` for headless builds. |
-| `WITH_WAYLAND` | Auto | Build the Wayland client (`wlfreerdp`). Detected automatically on Linux; disable with `-DWITH_WAYLAND=OFF`. |
+| `WITH_WAYLAND` | Auto | Build the Wayland client (`wlfreerdp`). Detected automatically on Linux/Unix; disable with `-DWITH_WAYLAND=OFF`. **Note:** the Wayland client is currently marked as unmaintained; the SDL client is the recommended cross-platform alternative. |
 | `WITH_CLIENT_INTERFACE` | `OFF` | Expose clients as a library with a stable interface (for embedding FreeRDP in another application). |
 | `CLIENT_INTERFACE_SHARED` | `OFF` | Build the client interface library as a shared library. Depends on `WITH_CLIENT_INTERFACE`. |
 | `WITH_RDTK` | `OFF` | Build the RdTk GUI toolkit (experimental, used by some server-side shadow clients). |
@@ -114,7 +114,7 @@ cmake --build build --target install
 | Option | Default | Description |
 |--------|---------|-------------|
 | `WITH_KRB5` | Auto | Compile Kerberos 5 authentication support. Supports MIT Kerberos and Heimdal. Required for smartcard-based NLA logon. Disable with `-DWITH_KRB5=OFF`. |
-| `WITH_PCSC` | Auto | Enable PC/SC smart card support for smartcard redirection and NLA smartcard logon. Disable with `-DWITH_PCSC=OFF`. |
+| `WITH_PCSC` | Auto | Enable PC/SC smart card support for smartcard redirection and NLA smartcard logon. Auto-detected via `find_feature(PCSC ...)`; disable with `-DWITH_PCSC=OFF`. The WinPR smartcard PCSC backend is separately controlled by `-DWITH_SMARTCARD_PCSC=ON` (default `ON`). |
 | `WITH_PKCS11` | Auto | Enable PKCS#11 support for NLA smartcard logon. Disable with `-DWITH_PKCS11=OFF`. |
 | `WITH_SMARTCARD_EMULATE` | `ON` | Emulate smart cards instead of redirecting physical readers. Useful for testing. |
 | `WITH_INTERNAL_RC4` | Auto | Use FreeRDP's built-in RC4 implementation instead of the SSL library's (needed when the SSL library has deprecated RC4, e.g., modern OpenSSL). |
@@ -168,7 +168,7 @@ Channel-level CMake options follow the pattern `CHANNEL_<NAME>` (master toggle) 
 | `CHANNEL_TSMF` | `OFF` | **Deprecated** multimedia redirection (`tsmf`). Disabled by default. |
 | `CHANNEL_ECHO` | `ON` | Echo diagnostic channel (`echo`). |
 | `CHANNEL_RDPEAR` | `ON` | Authentication Redirection (`rdpear`). |
-| `CHANNEL_RDPEWA` | Auto | WebAuthn/FIDO2 Redirection (`rdpewa`). Auto-detected when `libcbor` and `libfido2` are present. Disable with `-DCHANNEL_RDPEWA=OFF`. |
+| `CHANNEL_RDPEWA` | `OFF` | WebAuthn/FIDO2 Redirection (`rdpewa`). Disabled by default; enable with `-DCHANNEL_RDPEWA=ON` (requires `libcbor` and `libfido2`). |
 | `CHANNEL_SSHAGENT` | `OFF` | SSH Agent Forwarding (`sshagent`). Experimental; disabled by default. |
 | `CHANNEL_TELEMETRY` | `ON` | Telemetry (`telemetry`). |
 | `WITH_CUPS` | Auto | CUPS printer backend (Linux/macOS). Auto-detected; used by the `printer` channel. |
@@ -225,7 +225,7 @@ Channel-level CMake options follow the pattern `CHANNEL_<NAME>` (master toggle) 
 | `WITH_DEBUG_KBD` | `OFF` | Log keyboard input debug messages. |
 | `WITH_DEBUG_CHANNELS` | `OFF` | Log channel manager events. |
 | `WITH_DEBUG_CLIPRDR` | `OFF` | Log clipboard channel traffic. |
-| `WITH_DEBUG_RDPGFX` | `OFF` | Log GFX pipeline messages. |
+| `WITH_DEBUG_CODECS` | `OFF` | Log codec (H.264, RemoteFX, AV1) debug messages. Covers the GFX pipeline. |
 | `WITH_DEBUG_TRANSPORT` | `OFF` | Log low-level transport messages. |
 | `WITH_DEBUG_RDP` | `OFF` | Log core RDP PDU messages. |
 | `WITH_DEBUG_RFX` | `OFF` | Log RemoteFX codec messages. |

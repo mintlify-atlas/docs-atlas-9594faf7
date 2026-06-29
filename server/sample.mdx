@@ -46,8 +46,9 @@ struct test_peer_context
 
 #if defined(CHANNEL_AUDIN_SERVER)
     audin_server_context* audin;
-    BOOL               audin_open;
 #endif
+    BOOL               audin_open;    /* outside the AUDIN_SERVER guard */
+
 #if defined(CHANNEL_AINPUT_SERVER)
     ainput_server_context* ainput;
     BOOL               ainput_open;
@@ -68,36 +69,39 @@ The lifecycle from accepted socket to running session follows a fixed sequence. 
 
 <Steps>
   <Step title="Listener accepts a connection">
-    The `freerdp_listener` fires its `PeerAccepted` callback with a freshly created `freerdp_peer*`. The callback is responsible for configuring the peer and launching a service thread.
+    The `freerdp_listener` fires its `PeerAccepted` callback with a freshly created `freerdp_peer*`. The callback stores any application-level info on the peer and launches a service thread. Context setup happens inside the thread via a helper (`test_peer_init`).
 
     ```c
     static BOOL test_peer_accepted(freerdp_listener* instance,
                                    freerdp_peer*     client)
     {
-        /* Configure per-peer context dimensions */
-        client->ContextSize = sizeof(testPeerContext);
-        client->ContextNew  = test_peer_context_new;
-        client->ContextFree = test_peer_context_free;
+        HANDLE hThread = NULL;
 
-        if (!freerdp_peer_context_new(client))
+        /* Pass server-level info to the peer thread */
+        client->ContextExtra = instance->info;
+
+        hThread = CreateThread(NULL, 0,
+                               test_peer_mainloop, (void*)client, 0, NULL);
+        if (!hThread)
             return FALSE;
 
-        /* Register protocol lifecycle callbacks */
-        client->Capabilities = tf_peer_capabilities;
-        client->PostConnect   = tf_peer_post_connect;
-        client->Activate      = tf_peer_activate;
-
-        /* Launch per-peer thread */
-        HANDLE thread = CreateThread(NULL, 0,
-                                     test_peer_run, client, 0, NULL);
-        return thread != NULL;
+        CloseHandle(hThread);
+        return TRUE;
     }
     ```
   </Step>
-  <Step title="Context allocation — ContextNew / ContextFree">
-    `freerdp_peer_context_new()` calls `ContextNew` immediately. This is where you initialize all per-session resources. `ContextFree` is called when the session ends, whether cleanly or by error.
+  <Step title="Context allocation — test_peer_init">
+    Before calling `client->Initialize`, the peer thread sets `ContextSize`, `ContextNew`, and `ContextFree`, then calls `freerdp_peer_context_new()` which immediately invokes `ContextNew`.
 
     ```c
+    static BOOL test_peer_init(freerdp_peer* client)
+    {
+        client->ContextSize = sizeof(testPeerContext);
+        client->ContextNew  = test_peer_context_new;
+        client->ContextFree = test_peer_context_free;
+        return freerdp_peer_context_new(client);
+    }
+
     static BOOL test_peer_context_new(freerdp_peer* client,
                                       rdpContext*   ctx)
     {
@@ -221,6 +225,8 @@ The lifecycle from accepted socket to running session follows a fixed sequence. 
         tf_peer_unicode_keyboard_event;
     client->context->input->MouseEvent       =
         tf_peer_mouse_event;
+    client->context->input->RelMouseEvent    =
+        tf_peer_rel_mouse_event;
     client->context->input->ExtendedMouseEvent =
         tf_peer_extended_mouse_event;
     ```
@@ -229,10 +235,17 @@ The lifecycle from accepted socket to running session follows a fixed sequence. 
     The peer thread runs a wait/dispatch loop. `CheckFileDescriptor` drives the RDP state machine; it reads incoming PDUs, fires the registered callbacks, and sends any queued output.
 
     ```c
-    static DWORD WINAPI test_peer_run(LPVOID arg)
+    static DWORD WINAPI test_peer_mainloop(LPVOID arg)
     {
         freerdp_peer* client = (freerdp_peer*)arg;
-        testPeerContext* ctx = (testPeerContext*)client->context;
+
+        if (!test_peer_init(client))
+        {
+            freerdp_peer_free(client);
+            return 0;
+        }
+
+        /* ... configure settings, register PostConnect / Activate ... */
 
         if (!client->Initialize(client))
             goto disconnect;
@@ -240,11 +253,17 @@ The lifecycle from accepted socket to running session follows a fixed sequence. 
         while (TRUE)
         {
             DWORD nCount = 0;
-            HANDLE handles[MAXIMUM_WAIT_OBJECTS];
+            HANDLE handles[32];
 
-            nCount = client->GetEventHandles(client, handles, 64);
-            /* add application-level handles (timer, vcm, ...) */
-            handles[nCount++] = WTSVirtualChannelManagerGetEventHandle(ctx->vcm);
+            DWORD tmp = client->GetEventHandles(client, handles, 32);
+            if (tmp == 0)
+                break;
+            nCount += tmp;
+
+            /* add application-level handles (vcm, ...) */
+            handles[nCount++] =
+                WTSVirtualChannelManagerGetEventHandle(
+                    ((testPeerContext*)client->context)->vcm);
 
             DWORD status = WaitForMultipleObjects(nCount, handles,
                                                   FALSE, INFINITE);
@@ -254,8 +273,8 @@ The lifecycle from accepted socket to running session follows a fixed sequence. 
             if (!client->CheckFileDescriptor(client))
                 break;
 
-            if (WTSVirtualChannelManagerCheckFileDescriptor(ctx->vcm)
-                != TRUE)
+            if (WTSVirtualChannelManagerCheckFileDescriptor(
+                    ((testPeerContext*)client->context)->vcm) != TRUE)
                 break;
         }
 
@@ -348,12 +367,13 @@ cmake -B build -S . \
 cmake --build build --target sfreerdp-server
 ```
 
-Run it (it will auto-generate a certificate the first time):
+Run it by supplying a certificate and key (generate with `winpr-makecert` or openssl):
 
 ```bash
 ./build/server/Sample/sfreerdp-server \
-  --cert auto \
-  --port 3389
+  --cert=server.crt \
+  --key=server.key \
+  --port=3389
 ```
 
 Then connect with any RDP client:

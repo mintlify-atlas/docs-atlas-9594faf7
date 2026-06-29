@@ -161,8 +161,8 @@ xfreerdp /v:rdp.example.com /cert:fingerprint:sha256:AA:BB:CC:...
     # Redirect a USB device by vendor:product ID
     xfreerdp /v:rdp.example.com /usb:id,dev:054c:0268
 
-    # Redirect a serial port
-    xfreerdp /v:rdp.example.com /serial:/dev/ttyS0
+    # Redirect a serial port (name, device path)
+    xfreerdp /v:rdp.example.com /serial:COM1,/dev/ttyS0
 
     # Redirect a smart card
     xfreerdp /v:rdp.example.com /smartcard

@@ -100,7 +100,7 @@ Each architecture has a wrapper script. All three delegate to `_build.sh`, which
   ```
 </CodeGroup>
 
-Binaries are placed in `docs/mingw-example/build/<arch>/` by the `dist-builder` Docker Compose service.
+Binaries are placed in `docs/mingw-example/build/` by the `dist-builder` Docker Compose service.
 
 ### How the Docker build works
 
@@ -156,10 +156,8 @@ set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc)
 set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++)
 set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32)
 
-execute_process(COMMAND which x86_64-w64-mingw32-windres
-  OUTPUT_VARIABLE TOOLCHAIN_RC_COMPILER)
-execute_process(COMMAND which x86_64-w64-mingw32-dlltool
-  OUTPUT_VARIABLE TOOLCHAIN_DLLTOOL)
+execute_process(COMMAND which x86_64-w64-mingw32-windres OUTPUT_VARIABLE TOOLCHAIN_RC_COMPILER)
+execute_process(COMMAND which x86_64-w64-mingw32-dlltool OUTPUT_VARIABLE TOOLCHAIN_DLLTOOL)
 
 string(STRIP ${TOOLCHAIN_RC_COMPILER} TOOLCHAIN_RC_COMPILER)
 set(CMAKE_RC_COMPILER ${TOOLCHAIN_RC_COMPILER})
@@ -181,9 +179,6 @@ The MinGW build is exercised in the official CI via the workflow at `.github/wor
 
 # Build static libraries
 ./scripts/mingw.sh --static
-
-# Show all options
-./scripts/mingw.sh --help
 ```
 
 <Tip>

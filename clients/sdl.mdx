@@ -109,7 +109,7 @@ The SDL client uses a configurable modifier key (`SDL_KeyModMask`, default `KMOD
 
 ## Configuration file
 
-The SDL3 client stores per-user preferences as JSON under `$XDG_CONFIG_HOME/<vendor>/<product>/sdl-freerdp.json` (typically `~/.config/freerdp/sdl-freerdp.json`). All shortcut keys are overridable using SDL scancode names from the [SDL_Scancode documentation](https://wiki.libsdl.org/SDL3/SDL_Scancode).
+The SDL3 client stores per-user preferences as JSON at `$XDG_CONFIG_HOME/freerdp/sdl-freerdp.json` (typically `~/.config/freerdp/sdl-freerdp.json`). All shortcut keys are overridable using SDL scancode names from the [SDL_Scancode documentation](https://wiki.libsdl.org/SDL3/SDL_Scancode).
 
 ```json
 {
@@ -122,7 +122,7 @@ The SDL3 client stores per-user preferences as JSON under `$XDG_CONFIG_HOME/<ven
 }
 ```
 
-To disable all hotkeys set `SDL_KeyModMask` to `["KEYMOD_NONE"]`.
+To disable all hotkeys set `SDL_KeyModMask` to `["KMOD_NONE"]`.
 
 ## Global configuration
 
