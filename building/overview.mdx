@@ -1,0 +1,188 @@
+---
+title: "Building FreeRDP: Dependencies and CMake Configuration"
+sidebarTitle: "Overview"
+description: "CMake ≥ 3.13 build system overview for FreeRDP — SSL, Kerberos, H264, audio codecs, smartcard, USB, and platform-specific dependencies explained."
+---
+
+FreeRDP uses CMake (minimum version 3.13) as its build system and supports a wide range of optional dependencies that unlock additional protocol features. Before building for any platform, it helps to understand which dependencies are required, which are optional but recommended, and which CMake flags control them. The sections below enumerate every major dependency group along with the flags you will pass to `cmake` to enable or disable each one.
+
+## Required Dependencies
+
+### SSL / TLS
+
+RDP requires a secure transport tunnel. FreeRDP delegates all cryptographic work to an existing SSL library rather than implementing its own.
+
+| Library | CMake flag |
+|---------|-----------|
+| OpenSSL *(default)* | `-DWITH_OPENSSL=ON` |
+| LibreSSL *(drop-in replacement)* | `-DWITH_OPENSSL=ON` |
+| MbedTLS | `-DWITH_OPENSSL=OFF -DWITH_MBEDTLS=ON` |
+
+If your SSL library has deprecated certain legacy algorithms, FreeRDP can provide its own implementations:
+
+```cmake
+-DWITH_INTERNAL_MD4=ON
+-DWITH_INTERNAL_MD5=ON
+-DWITH_INTERNAL_RC4=ON
+```
+
+### Unicode Conversion
+
+Most of the RDP protocol uses UCS-2/UTF-16 strings internally. A Unicode conversion library is therefore required on all platforms except Windows (which provides native support).
+
+| Platform | Library used |
+|----------|-------------|
+| Windows | Native Win32 API |
+| Linux / Unix / Android | ICU |
+| Apple (iOS / macOS) | Native `NSString` routines |
+
+To skip an external library and use FreeRDP's built-in char16 ↔ UTF-8 routines instead, pass `-DWITH_UNICODE_BUILTIN=ON`.
+
+## Optional Dependencies
+
+### Kerberos
+
+Many enterprise RDP servers require Kerberos for authentication, especially when smartcards are involved. Both MIT Kerberos and Heimdal are supported. Disable with `-DWITH_KRB5=OFF`.
+
+### JSON
+
+Azure AD logon requires HTTP/JSON parsing. FreeRDP supports both **cJSON** and **json-c**. Disable with `-DWITH_JSON_DISABLED=ON`.
+
+### H264 Video Codec
+
+RDP GFX modes used by Windows 8.1 / Server 2012 and newer rely on H264 for graphics compression. Two backends are supported:
+
+```cmake
+# OpenH264 (Cisco)
+-DWITH_OPENH264=ON
+
+# FFmpeg (x264 or OpenH264)
+-DWITH_FFMPEG=ON
+```
+
+Platform-specific hardware implementations (e.g. MediaCodec on Android) are also supported where available.
+
+### Graphics Scaling (High-DPI / Smart-Sizing)
+
+High-DPI displays and the smart-sizing client option require bitmap scaling support:
+
+```cmake
+-DWITH_SWSCALE=ON   # libswscale (part of FFmpeg)
+-DWITH_CAIRO=ON     # Cairo
+```
+
+### Audio Encoders / Decoders
+
+Sound and microphone redirection can transmit audio in compressed formats. PCM is always supported; AAC (Windows 8+) and GSM are optional.
+
+```cmake
+-DWITH_DSP_FFMPEG=ON         # FFmpeg audio codecs
+-DWITH_GSM=ON                # GSM codec
+-DWITH_SOX=ON                # SoX resampling (soxr)
+-DWITH_DSP_EXPERIMENTAL=ON   # Experimental codecs (AAC encoding)
+```
+
+FAAC / FAAD2 are found automatically when present.
+
+### Smartcard
+
+PCSC is needed for smartcard redirection; pkcs11 is needed for NLA smartcard logon.
+
+```cmake
+-DWITH_PCSC=OFF    # Disable PCSC
+-DWITH_PKCS11=OFF  # Disable pkcs11
+```
+
+### USB Redirection
+
+Low-level USB device forwarding over the URBDRC channel requires **libusb 1**. Disable with `-DCHANNEL_URBDRC=OFF`.
+
+### WebAuthn / FIDO2
+
+The `[MS-RDPEWA]` extension forwards WebAuthn/FIDO2 authenticator requests from server to client, enabling hardware security key passkey and 2FA support inside the remote session. Requires **libcbor** and **libfido2**; enabled automatically when both are found. Disable with `-DCHANNEL_RDPEWA=OFF`.
+
+```bash
+# Debian / Ubuntu
+apt install libcbor-dev libfido2-dev
+
+# Fedora
+dnf install libcbor-devel libfido2-devel
+```
+
+### Platform-Specific
+
+| Feature | CMake flag | Platforms |
+|---------|-----------|-----------|
+| X11 client | `-DWITH_X11=ON` (default on Linux) | Linux |
+| Wayland client (`wlfreerdp`) | `-DWITH_WAYLAND=ON` | Linux |
+| SDL client | `-DWITH_CLIENT_SDL=ON` | All |
+| ALSA audio | `-DWITH_ALSA=ON` | Linux |
+| PulseAudio | `-DWITH_PULSE=ON` | Linux |
+| OSS audio | `-DWITH_OSS=ON` | Linux / BSD |
+| CUPS printing | `-DWITH_CUPS=ON` | Linux / macOS |
+| FUSE clipboard | `-DWITH_FUSE=ON` | Linux / macOS |
+| systemd journal | `-DWITH_SYSTEMD=ON` | Linux |
+| PAM auth | *(auto-detected)* | Linux server |
+| macOS audio | `-DWITH_MACAUDIO=ON` | macOS |
+
+### Server Components
+
+```cmake
+-DWITH_PROXY=ON    # RDP proxy server
+-DWITH_SHADOW=ON   # Shadow (screen-sharing) server
+-DWITH_SAMPLE=ON   # Sample client and server
+```
+
+## Build Recommendations
+
+<Note>
+  Use the **Ninja** generator (`-GNinja`) for significantly faster incremental builds. Install it with your package manager (`apt install ninja-build`, `brew install ninja`, etc.).
+</Note>
+
+| Recommendation | CMake flag |
+|----------------|-----------|
+| Release build | `-DCMAKE_BUILD_TYPE=Release` |
+| Release + debug symbols | `-DCMAKE_BUILD_TYPE=RelWithDebInfo` |
+| Stable/production builds | `-DWITH_VERBOSE_WINPR_ASSERT=OFF` |
+| Development / CI builds | `-DWITH_VERBOSE_WINPR_ASSERT=ON` |
+
+<Tip>
+  `ccmake` (Linux / macOS) provides a curses-based UI to inspect and toggle every variable in an existing `CMakeCache.txt`. Run it inside your build directory for a quick overview of the current configuration.
+</Tip>
+
+### Reference Build Example
+
+The following commands check out FreeRDP to `/tmp/freerdp/src`, build with Ninja in Release mode, and install to `/tmp/freerdp/install`:
+
+```bash
+cmake -GNinja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DWITH_VERBOSE_WINPR_ASSERT=OFF \
+  -DCMAKE_PREFIX_PATH=/tmp/freerdp/install \
+  -B /tmp/freerdp/build \
+  -S /tmp/freerdp/src
+
+cmake --build /tmp/freerdp/build --target install
+```
+
+On Windows the same commands must be run from a **Visual Studio Developer Command Prompt** or after running `vcvarsall.bat`, with paths adjusted accordingly.
+
+## Platform Guides
+
+<CardGroup cols={2}>
+  <Card title="Linux" icon="linux" href="/building/linux">
+    Debian/Ubuntu prerequisites, X11, Wayland, SDL, audio, and proxy server builds.
+  </Card>
+  <Card title="Windows" icon="windows" href="/building/windows">
+    Visual Studio MSVC build and MinGW cross-compile via Docker.
+  </Card>
+  <Card title="macOS" icon="apple" href="/building/macos">
+    Homebrew/MacPorts OpenSSL workaround and standard CMake build.
+  </Card>
+  <Card title="Android" icon="android" href="/building/android">
+    Android Studio, Gradle CLI, and standalone CMake NDK builds.
+  </Card>
+  <Card title="iOS" icon="mobile" href="/building/ios">
+    Xcode project generation, OpenSSL pre-build script, and simulator switching.
+  </Card>
+</CardGroup>

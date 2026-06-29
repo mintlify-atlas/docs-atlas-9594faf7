@@ -1,0 +1,422 @@
+---
+title: "WinPR: Windows Portability Runtime for Linux and macOS"
+sidebarTitle: "WinPR"
+description: "WinPR provides Win32 API compatibility across Linux, macOS, and Android. Learn its threading, sync, crypto, registry, pipe, and CLI modules."
+---
+
+WinPR (Windows Portable Runtime) is the cross-platform Win32 API compatibility layer that FreeRDP is built on. Instead of peppering application code with `#ifdef _WIN32` guards, WinPR lets you write Win32-style code once and compile it without modification on Linux, macOS, Android, and FreeBSD. On Windows itself, WinPR's headers simply map to the real Win32 APIs.
+
+## Standalone Usage
+
+WinPR is a fully independent library. You can use it in projects that have nothing to do with RDP.
+
+<Tabs>
+  <Tab title="pkg-config">
+    ```bash
+    cc my_app.c \
+        $(pkg-config --cflags --libs winpr3) \
+        -o my_app
+    ```
+  </Tab>
+  <Tab title="CMake">
+    ```cmake
+    find_package(WinPR3 REQUIRED)
+
+    add_executable(my_app my_app.c)
+    target_link_libraries(my_app winpr3)
+    ```
+  </Tab>
+</Tabs>
+
+The main include is `<winpr/winpr.h>`, which sets up platform detection. Individual modules have their own headers under `<winpr/>`.
+
+## Module Overview
+
+WinPR ships 60+ headers. The table below groups them by functional area.
+
+| Module | Header | Win32 Equivalent |
+|---|---|---|
+| Threads | `winpr/thread.h` | `processthreadsapi.h` |
+| Synchronization | `winpr/synch.h` | `synchapi.h` |
+| Handles | `winpr/handle.h` | `handleapi.h` |
+| Process / Environment | `winpr/environment.h` | `processenv.h` |
+| Registry | `winpr/registry.h` | `winreg.h` |
+| File & Path | `winpr/file.h`, `winpr/path.h` | `fileapi.h`, `shlwapi.h` |
+| Named Pipes | `winpr/pipe.h` | `namedpipeapi.h` |
+| Sockets | `winpr/winsock.h` | `winsock2.h` |
+| Cryptography | `winpr/crypto.h`, `winpr/bcrypt.h` | `bcrypt.h` |
+| SSPI / NTLM | `winpr/sspi.h`, `winpr/ntlm.h` | `sspi.h` |
+| Smartcard | `winpr/smartcard.h` | `winscard.h` |
+| WTS API | `winpr/wtsapi.h` | `wtsapi32.h` |
+| Collections | `winpr/collections.h` | STL-like containers |
+| Command Line | `winpr/cmdline.h` | (custom) |
+| INI Files | `winpr/ini.h` | `GetPrivateProfileString` |
+| Streams | `winpr/stream.h` | (custom byte-stream) |
+| Clipboard | `winpr/clipboard.h` | `winuser.h` clipboard |
+| Time Zone | `winpr/timezone.h` | `timezoneapi.h` |
+| Logging | `winpr/wlog.h` | ETW / Debug Output |
+| Debug / Assert | `winpr/assert.h`, `winpr/debug.h` | `assert.h` |
+| JSON | `winpr/json.h` | (custom) |
+| ASN.1 | `winpr/asn1.h` | (custom) |
+| Security | `winpr/security.h`, `winpr/secapi.h` | `securitybaseapi.h` |
+| Memory helpers | `winpr/memory.h`, `winpr/crt.h` | `heapapi.h` |
+| Strings | `winpr/string.h` | `stringapiset.h` |
+| Platform detection | `winpr/platform.h` | `sdkddkver.h` |
+
+## Threads
+
+WinPR wraps POSIX `pthread` under the standard `CreateThread` / `WaitForSingleObject` / `CloseHandle` pattern:
+
+```c
+#include <winpr/thread.h>
+#include <winpr/synch.h>
+
+static DWORD WINAPI worker_thread(LPVOID arg)
+{
+    int* value = (int*)arg;
+    /* do work ... */
+    *value = 42;
+    return 0;
+}
+
+int main(void)
+{
+    int result = 0;
+    HANDLE thread = CreateThread(
+        NULL,           /* security attributes */
+        0,              /* stack size (0 = default) */
+        worker_thread,
+        &result,        /* argument */
+        0,              /* creation flags */
+        NULL);          /* thread ID output */
+
+    /* Block until the thread finishes */
+    WaitForSingleObject(thread, INFINITE);
+
+    DWORD exit_code = 0;
+    GetExitCodeThread(thread, &exit_code);
+    CloseHandle(thread);
+
+    /* result is now 42 */
+    return 0;
+}
+```
+
+## Synchronization
+
+### Events and Mutexes
+
+```c
+#include <winpr/synch.h>
+
+/* Manual-reset event */
+HANDLE evt = CreateEvent(NULL,  /* security */
+                          TRUE,  /* manual reset */
+                          FALSE, /* initially non-signalled */
+                          NULL); /* name */
+
+/* Signal the event */
+SetEvent(evt);
+
+/* Wait with a timeout */
+DWORD status = WaitForSingleObject(evt, 5000 /* ms */);
+if (status == WAIT_OBJECT_0)
+    /* event was signalled */;
+else if (status == WAIT_TIMEOUT)
+    /* timed out */;
+
+ResetEvent(evt);
+CloseHandle(evt);
+
+/* Mutex */
+HANDLE mtx = CreateMutex(NULL, FALSE, NULL);
+WaitForSingleObject(mtx, INFINITE);  /* acquire */
+/* critical section */
+ReleaseMutex(mtx);
+CloseHandle(mtx);
+```
+
+### Waiting on Multiple Objects
+
+```c
+HANDLE handles[3] = { evt1, evt2, thread };
+DWORD count = 3;
+
+DWORD idx = WaitForMultipleObjects(count, handles,
+                                    FALSE,    /* wait for ANY */
+                                    INFINITE);
+if (idx >= WAIT_OBJECT_0 && idx < WAIT_OBJECT_0 + count)
+    /* handles[idx - WAIT_OBJECT_0] was signalled */;
+```
+
+## Process and Environment
+
+```c
+#include <winpr/environment.h>
+
+/* Read an environment variable */
+char value[256] = { 0 };
+DWORD len = GetEnvironmentVariableA("HOME", value, sizeof(value));
+
+/* Set a variable for this process */
+SetEnvironmentVariableA("MY_VAR", "hello");
+
+/* Expand %VAR% or $VAR references */
+char expanded[512];
+ExpandEnvironmentStringsA("%HOME%/.config", expanded, sizeof(expanded));
+```
+
+## Registry
+
+WinPR emulates the Win32 Registry API on POSIX systems using an INI-file backend:
+
+```c
+#include <winpr/registry.h>
+
+HKEY hKey;
+LONG rc = RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+                         "SOFTWARE\\FreeRDP",
+                         0, KEY_READ, &hKey);
+if (rc == ERROR_SUCCESS)
+{
+    DWORD type, size = 256;
+    char  buf[256];
+    RegQueryValueExA(hKey, "Version", NULL, &type,
+                     (LPBYTE)buf, &size);
+    RegCloseKey(hKey);
+}
+
+/* Create and write */
+HKEY hNew;
+RegCreateKeyExA(HKEY_CURRENT_USER, "SOFTWARE\\MyApp",
+                0, NULL, REG_OPTION_NON_VOLATILE,
+                KEY_ALL_ACCESS, NULL, &hNew, NULL);
+DWORD val = 1;
+RegSetValueExA(hNew, "Enabled", 0, REG_DWORD,
+               (const BYTE*)&val, sizeof(val));
+RegCloseKey(hNew);
+```
+
+## Named Pipes
+
+```c
+#include <winpr/pipe.h>
+
+/* Server side */
+HANDLE server = CreateNamedPipeA(
+    "\\\\.\\pipe\\MyPipe",
+    PIPE_ACCESS_DUPLEX,
+    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+    1,      /* max instances */
+    4096,   /* out buffer */
+    4096,   /* in buffer */
+    0,      /* default timeout */
+    NULL);
+
+ConnectNamedPipe(server, NULL);  /* block until client connects */
+
+/* Client side */
+HANDLE client = CreateFileA("\\\\.\\pipe\\MyPipe",
+    GENERIC_READ | GENERIC_WRITE,
+    0, NULL, OPEN_EXISTING, 0, NULL);
+
+/* Transfer data */
+DWORD written;
+WriteFile(server, "hello", 5, &written, NULL);
+
+char buf[64];
+DWORD read;
+ReadFile(client, buf, sizeof(buf), &read, NULL);
+
+CloseHandle(client);
+DisconnectNamedPipe(server);
+CloseHandle(server);
+```
+
+## Collections
+
+`winpr/collections.h` provides generic container types similar to C++ STL:
+
+```c
+#include <winpr/collections.h>
+
+/* Doubly linked list */
+wLinkedList* list = LinkedList_New();
+LinkedList_AddLast(list, (void*)(uintptr_t)42);
+LinkedList_Free(list);
+
+/* Hash map / dictionary */
+wHashTable* map = HashTable_New(TRUE /* thread-safe */);
+HashTable_Insert(map, "key", "value");
+void* val = HashTable_GetItemValue(map, "key");
+HashTable_Free(map);
+
+/* Queue */
+wQueue* q = Queue_New(TRUE, -1, -1);
+Queue_Enqueue(q, "item");
+void* item = Queue_Dequeue(q);
+Queue_Free(q);
+
+/* ArrayList (dynamic array) */
+wArrayList* arr = ArrayList_New(TRUE);
+ArrayList_Add(arr, "first");
+void* elem = ArrayList_GetItem(arr, 0);
+ArrayList_Free(arr);
+```
+
+## Command-Line Parsing
+
+```c
+#include <winpr/cmdline.h>
+
+COMMAND_LINE_ARGUMENT_A args[] = {
+    { "host",   COMMAND_LINE_VALUE_REQUIRED, "<hostname>", NULL,
+      NULL, -1, NULL, "RDP server hostname" },
+    { "port",   COMMAND_LINE_VALUE_OPTIONAL, "<port>", "3389",
+      NULL, -1, NULL, "RDP server port" },
+    { "verbose", COMMAND_LINE_VALUE_FLAG, NULL, NULL,
+      NULL, -1, NULL, "Enable verbose output" },
+    { NULL, 0, NULL, NULL, NULL, -1, NULL, NULL }  /* sentinel */
+};
+
+int rc = CommandLineParseArgumentsA(argc, argv, args,
+                                     COMMAND_LINE_SEPARATOR_COLON,
+                                     NULL, NULL);
+
+/* Walk parsed results */
+COMMAND_LINE_ARGUMENT_A* arg = args;
+do {
+    if (arg->Flags & COMMAND_LINE_ARGUMENT_PRESENT)
+    {
+        if (strcmp(arg->Name, "host") == 0)
+            printf("host = %s\n", arg->Value);
+    }
+} while ((arg = CommandLineFindNextArgumentA(arg)) != NULL);
+```
+
+## INI File Parsing
+
+```c
+#include <winpr/ini.h>
+
+wIniFile* ini = IniFile_New();
+IniFile_ReadFile(ini, "/etc/myapp.ini");
+
+/* Read a value */
+const char* val = IniFile_GetKeyValueString(ini, "Connection", "Host");
+int port = IniFile_GetKeyValueInt(ini, "Connection", "Port");
+
+/* Write a value */
+IniFile_SetKeyValueString(ini, "Connection", "Host", "rdp.example.com");
+IniFile_WriteFile(ini, "/etc/myapp.ini");
+
+IniFile_Free(ini);
+```
+
+## Crypto and BCrypt
+
+WinPR wraps OpenSSL or mbedTLS using the BCrypt API surface:
+
+```c
+#include <winpr/bcrypt.h>
+#include <winpr/crypto.h>
+
+/* Generate cryptographically secure random bytes */
+BYTE nonce[32];
+winpr_RAND(nonce, sizeof(nonce));
+
+/* Compute SHA-256 */
+BYTE digest[32];
+WINPR_DIGEST_CTX* ctx = winpr_Digest_New();
+winpr_Digest_Init(ctx, WINPR_MD_SHA256);
+winpr_Digest_Update(ctx, (const BYTE*)"hello", 5);
+winpr_Digest_Final(ctx, digest, sizeof(digest));
+winpr_Digest_Free(ctx);
+```
+
+## SSPI and NTLM Authentication
+
+WinPR includes a full SSPI implementation with support for NTLM and Kerberos (via GSSAPI):
+
+```c
+#include <winpr/sspi.h>
+#include <winpr/ntlm.h>
+
+/* Enumerate available security packages */
+PSecPkgInfoA pkgInfo;
+ULONG pkgCount;
+EnumerateSecurityPackagesA(&pkgCount, &pkgInfo);
+FreeContextBuffer(pkgInfo);
+
+/* Acquire credentials for NTLM */
+CredHandle   creds;
+TimeStamp    expiry;
+SEC_WINNT_AUTH_IDENTITY_A identity = {
+    .User           = (BYTE*)"alice",
+    .UserLength     = 5,
+    .Domain         = (BYTE*)"CORP",
+    .DomainLength   = 4,
+    .Password       = (BYTE*)"secret",
+    .PasswordLength = 6,
+    .Flags          = SEC_WINNT_AUTH_IDENTITY_ANSI,
+};
+AcquireCredentialsHandleA(NULL, "NTLM",
+    SECPKG_CRED_OUTBOUND, NULL, &identity,
+    NULL, NULL, &creds, &expiry);
+```
+
+## Streams
+
+The `wStream` byte-stream type is used pervasively throughout FreeRDP's protocol layer:
+
+```c
+#include <winpr/stream.h>
+
+/* Allocate a 1024-byte stream */
+wStream* s = Stream_New(NULL, 1024);
+
+/* Write primitives (little-endian by default) */
+Stream_Write_UINT16(s, 0x0100);
+Stream_Write_UINT32(s, 0xDEADBEEF);
+Stream_Write(s, buffer, length);
+
+/* Seek back to start and read */
+Stream_SetPosition(s, 0);
+UINT16 ver;
+Stream_Read_UINT16(s, ver);
+
+/* Get the raw pointer and current length */
+BYTE*  ptr  = Stream_Buffer(s);
+size_t used = Stream_GetPosition(s);
+
+Stream_Free(s, TRUE /* free underlying buffer */);
+```
+
+## All WinPR Headers
+
+<Accordion title="Complete header listing">
+```
+winpr/asn1.h          winpr/assert.h        winpr/atexit.h
+winpr/bcrypt.h        winpr/bitstream.h     winpr/cast.h
+winpr/clipboard.h     winpr/cmdline.h       winpr/collections.h
+winpr/comm.h          winpr/cred.h          winpr/crt.h
+winpr/crypto.h        winpr/debug.h         winpr/dsparse.h
+winpr/endian.h        winpr/environment.h   winpr/error.h
+winpr/file.h          winpr/handle.h        winpr/image.h
+winpr/ini.h           winpr/input.h         winpr/interlocked.h
+winpr/intrin.h        winpr/io.h            winpr/json.h
+winpr/library.h       winpr/memory.h        winpr/ncrypt.h
+winpr/nt.h            winpr/ntlm.h          winpr/path.h
+winpr/pipe.h          winpr/platform.h      winpr/pool.h
+winpr/print.h         winpr/registry.h      winpr/rpc.h
+winpr/sam.h           winpr/schannel.h      winpr/secapi.h
+winpr/security.h      winpr/shell.h         winpr/smartcard.h
+winpr/spec.h          winpr/ssl.h           winpr/sspi.h
+winpr/sspicli.h       winpr/stream.h        winpr/string.h
+winpr/strlst.h        winpr/synch.h         winpr/sysinfo.h
+winpr/tchar.h         winpr/thread.h        winpr/timezone.h
+winpr/user.h          winpr/wincrypt.h      winpr/windows.h
+winpr/winpr.h         winpr/winsock.h       winpr/wlog.h
+winpr/wtsapi.h        winpr/wtypes.h
+```
+</Accordion>

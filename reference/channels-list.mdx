@@ -1,0 +1,170 @@
+---
+title: "FreeRDP Complete Virtual Channels Reference Guide"
+sidebarTitle: "Virtual Channels"
+description: "Full reference of all virtual channel plugins in FreeRDP, organized by category with folder names, MS spec references, and descriptions."
+---
+
+FreeRDP implements the Remote Desktop Protocol's virtual channel architecture, which allows capabilities to be layered on top of a core RDP connection. Each channel is a self-contained plugin that can be enabled or disabled independently at build time. Channels are either **static** (established during RDP negotiation) or **dynamic** (multiplexed over the `drdynvc` static channel). The following tables cover every channel directory found under `channels/` in the FreeRDP source tree.
+
+<Note>
+  All channels are built by default when `WITH_CHANNELS=ON` (the default). Individual channels can be disabled at CMake configure time with `-DCHANNEL_<NAME>=OFF`. Dynamic channels require `CHANNEL_DRDYNVC=ON`.
+</Note>
+
+## Infrastructure
+
+These channels underpin the dynamic-channel subsystem itself.
+
+| Folder | Common Name | Type | MS Spec | Description |
+|--------|-------------|------|---------|-------------|
+| `drdynvc` | Dynamic Virtual Channel | Static | [MS-RDPEDYC] | Multiplexer for all dynamic virtual channels (DVC). Required for any `dynamic` channel below. |
+
+---
+
+## Audio
+
+<CardGroup cols={2}>
+  <Card title="audin" icon="microphone">
+    **Audio Input Redirection Virtual Channel Extension**  
+    Spec: [MS-RDPEAI] · Type: Dynamic  
+    Captures microphone/audio input on the client and forwards it to the remote session. Backends: ALSA, PulseAudio, OSS, WinMM, CoreAudio (macOS), OpenSLES (Android).
+  </Card>
+  <Card title="rdpsnd" icon="volume-high">
+    **Audio Output Virtual Channel Extension**  
+    Spec: [MS-RDPEA] · Type: Static/Dynamic  
+    Streams audio output from the remote session to the client's speakers. Same backend support as `audin`. Supports compressed formats (PCM, AAC with FFMPEG, GSM) depending on build options.
+  </Card>
+</CardGroup>
+
+---
+
+## Clipboard
+
+| Folder | Common Name | Type | MS Spec | Description |
+|--------|-------------|------|---------|-------------|
+| `cliprdr` | Clipboard Virtual Channel Extension | Static | [MS-RDPECLIP] | Bidirectional clipboard synchronisation between client and remote desktop. Supports text, images, and file transfer (the latter via FUSE on Linux/macOS when built with `-DWITH_FUSE=ON`). |
+
+---
+
+## Display and Graphics
+
+<Accordion title="rdpgfx — Graphics Pipeline Extension">
+  **Type:** Dynamic · **Spec:** [MS-RDPEGFX]
+
+  The primary graphics acceleration channel introduced for Windows 8/Server 2012 and newer. Carries H.264/AVC-encoded video frames, RemoteFX progressive codecs, and AV1 (experimental). This channel supersedes the legacy bitmap updates for modern RemoteFX sessions. Build with `-DWITH_OPENH264=ON` or `-DWITH_FFMPEG=ON` to enable codec support.
+</Accordion>
+
+<Accordion title="disp — Display Update Virtual Channel Extension">
+  **Type:** Dynamic · **Spec:** [MS-RDPEDISP]
+
+  Allows the client to notify the server of display resolution or layout changes during an active session. Used by FreeRDP's SDL and X11 clients when the window is resized, enabling dynamic resolution updates without reconnecting.
+</Accordion>
+
+<Accordion title="geometry — Geometry Tracking Virtual Channel Extension">
+  **Type:** Dynamic · **Spec:** [MS-RDPEGT]
+
+  Streams the geometry (bounding regions) of windows on the remote desktop to the client. Used in conjunction with the `video` channel and RAIL to enable composited window rendering on the client side.
+</Accordion>
+
+<Accordion title="video — Video Optimized Remoting Virtual Channel Extension">
+  **Type:** Dynamic · **Spec:** [MS-RDPEVOR]
+
+  Delivers video streams from the remote desktop to the client with optimized handling. Works alongside the `geometry` channel to present video content in designated screen regions with minimal bandwidth usage.
+</Accordion>
+
+<Accordion title="gfxredir — Graphics Redirection Virtual Channel Extension">
+  **Type:** Dynamic · **Spec:** [MS-RDPXXXX] (internal/experimental)
+
+  An extension for graphics redirection, providing an additional path for GPU-accelerated rendering content to be forwarded to the client.
+</Accordion>
+
+---
+
+## Device Redirection
+
+Device redirection channels allow local client peripherals to appear inside the remote session. They are grouped under the `rdpdr` framework.
+
+| Folder | Common Name | Type | MS Spec | Description |
+|--------|-------------|------|---------|-------------|
+| `rdpdr` | Device Redirection Virtual Channel Extension | Static | [MS-RDPEFS] [MS-RDPEPC] [MS-RDPESC] [MS-RDPESP] | Core device-redirection transport. Acts as the hub for `drive`, `printer`, `serial`, `parallel`, and `smartcard` sub-channels. |
+| `drive` | Drive Redirection Virtual Channel Extension | Device | [MS-RDPEFS] | Redirects a local filesystem path into the remote session as a mapped drive. Activate with `/drive:<name>,<path>` on the command line. |
+| `printer` | Print Virtual Channel Extension | Device | [MS-RDPEPC] | Exposes client-side printers inside the remote session. Requires CUPS on Linux/macOS (`-DWITH_CUPS=ON`) or uses Windows print APIs on Windows. |
+| `serial` | Serial Port Virtual Channel Extension | Device | [MS-RDPESP] | Forwards a local serial (`COM`) port to the remote session. Linux/macOS only; not supported on Windows or Android. |
+| `parallel` | Parallel Port Virtual Channel Extension | Device | [MS-RDPESP] | Forwards a local parallel (`LPT`) port to the remote session. Linux only; not supported on Windows, macOS, or Android. |
+| `smartcard` | Smart Card Virtual Channel Extension | Device | [MS-RDPESC] | Redirects PC/SC smart card readers and their inserted cards into the remote session. Requires PCSC libraries (`-DWITH_PCSC=ON`). Also supports emulation mode (`-DWITH_SMARTCARD_EMULATE=ON`). |
+
+---
+
+## USB and Camera Redirection
+
+<CardGroup cols={2}>
+  <Card title="urbdrc" icon="usb">
+    **USB Devices Virtual Channel Extension**  
+    Spec: [MS-RDPEUSB] · Type: Dynamic  
+    Provides low-level USB device redirection, allowing USB peripherals connected to the client to appear inside the remote session. Requires `libusb-1.0`. Disable with `-DCHANNEL_URBDRC=OFF`.
+  </Card>
+  <Card title="rdpecam" icon="camera">
+    **Video Capture Virtual Channel Extension**  
+    Spec: [MS-RDPECAM] · Type: Dynamic  
+    Redirects a local camera or webcam into the remote desktop session. Uses V4L2 on Linux and platform video APIs on Android. Introduced in the FreeRDP 3.x series with growing platform coverage.
+  </Card>
+</CardGroup>
+
+---
+
+## Input Channels
+
+| Folder | Common Name | Type | MS Spec | Description |
+|--------|-------------|------|---------|-------------|
+| `rdpei` | Input Virtual Channel Extension | Dynamic | [MS-RDPEI] | Transmits multi-touch and pen input events from the client to the remote session. Enables touch-screen passthrough. |
+| `ainput` | Advanced Input Virtual Channel Extension | Dynamic | [XXXXX] | Extended input channel for advanced input device events beyond what the base protocol carries. |
+| `rdpemsc` | Mouse Cursor Virtual Channel Extension | Dynamic | [MS-RDPEMSC] | Enables the server to transmit the shape of the remote cursor back to the client, so that cursor changes (e.g., resize arrows, text beam) are shown locally without a round-trip. |
+| `location` | Location Virtual Channel Extension | Dynamic | [MS-RDPEL] | Forwards the client's physical location (GPS / geolocation data) to the remote session, used by location-aware server applications. |
+
+---
+
+## Remote Applications
+
+| Folder | Common Name | Type | MS Spec | Description |
+|--------|-------------|------|---------|-------------|
+| `rail` | Remote Programs Virtual Channel Extension (RAIL) | Static | [MS-RDPERP] | Implements RemoteApp — individual remote applications appear as windows on the local desktop, fully integrated with the local window manager, without showing the full remote desktop. |
+| `remdesk` | Remote Assistance Virtual Channel Extension | Static | [MS-RA] | Implements the Remote Assistance protocol, supporting attended-help scenarios where a helper can view and control a user's session. |
+
+---
+
+## Network and Tunneling
+
+| Folder | Common Name | Type | Spec | Description |
+|--------|-------------|------|------|-------------|
+| `rdp2tcp` | TCP-over-RDP Tunnel | Static | — | Tunnels arbitrary TCP connections over an established RDP session. Useful for reaching services on the remote network through the RDP connection. Disabled by default (`CHANNEL_RDP2TCP=OFF`). |
+
+---
+
+## Collaboration and Multimedia
+
+| Folder | Common Name | Type | MS Spec | Description |
+|--------|-------------|------|---------|-------------|
+| `encomsp` | Multiparty Virtual Channel Extension | Static | [MS-RDPEMC] | Supports multi-party ("Multipoint") RDP sessions where multiple participants share a session simultaneously. |
+| `tsmf` | Video Redirection Virtual Channel Extension | Dynamic | [MS-RDPEV] | **Deprecated.** Legacy multimedia redirection channel for audio/video playback offloading. Replaced by the `rdpgfx` + `video` pipeline. Disabled by default. |
+| `echo` | Echo Virtual Channel Extension | Dynamic | [MS-RDPEECO] | A diagnostic loopback channel used for latency measurement and protocol conformance testing. Data sent by the client is echoed back by the server. |
+
+---
+
+## Security and Authentication
+
+| Folder | Common Name | Type | MS Spec | Description |
+|--------|-------------|------|---------|-------------|
+| `rdpear` | Authentication Redirection Virtual Channel Extension | Dynamic | [MS-RDPEAR] | Forwards authentication credentials and tokens from the client to the server, supporting advanced authentication redirection scenarios including Kerberos credential forwarding. |
+| `rdpewa` | WebAuthn Virtual Channel Extension | Dynamic | [MS-RDPEWA] | Forwards WebAuthn/FIDO2 authenticator requests from the remote session to locally attached security keys (hardware tokens, passkeys). Requires `libcbor` and `libfido2`. Enabled automatically when libraries are detected; disable with `-DCHANNEL_RDPEWA=OFF`. |
+| `sshagent` | SSH Agent Forwarding | Dynamic | — | **Experimental.** Forwards SSH agent requests from the remote session to the client's SSH agent socket, enabling SSH key-based authentication from within the RDP session. Disabled by default. |
+
+---
+
+## Telemetry
+
+| Folder | Common Name | Type | MS Spec | Description |
+|--------|-------------|------|---------|-------------|
+| `telemetry` | Telemetry Virtual Channel Extension | Dynamic | [MS-RDPET] | Carries diagnostic and telemetry data from the client to the server for session quality and error reporting. |
+
+<Note>
+  The `client/` and `server/` subdirectories under `channels/` contain shared channel infrastructure (helpers, common code) rather than individual channel implementations. The `drdynvc` channel is not listed in the per-category tables above but is a hard prerequisite for all dynamic channels.
+</Note>

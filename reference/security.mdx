@@ -1,0 +1,163 @@
+---
+title: "Security Policy and Vulnerability Reporting for FreeRDP"
+sidebarTitle: "Security"
+description: "FreeRDP security policy covering vulnerability reporting, supported versions, authentication methods, certificate verification, and CVE tracking."
+---
+
+FreeRDP is released under the Apache License 2.0 and follows a responsible-disclosure security model. The project takes security seriously: every reported vulnerability is reviewed, triaged, fixed on a private branch, and published alongside a new release and a GitHub Security Advisory. This page covers how to report vulnerabilities, which versions receive security updates, the authentication methods FreeRDP supports and their security implications, and how to configure certificate verification correctly in your application.
+
+---
+
+## Supported Versions
+
+Security updates and backports are provided for the latest stable release branch and the `master` development branch. Versions in the `stable-1.x` and `stable-2.0` branches are **no longer supported** and will not receive security fixes.
+
+| Version | Branch | Security Support |
+|---------|--------|-----------------|
+| `< 2.0.0` | `stable-1.x` | ❌ End-of-life |
+| `2.x.x` | `stable-2.0` | ❌ End-of-life |
+| `3.x.x` | `stable-3.0` | ✅ Supported |
+| `master` | `master` | ✅ Supported (issues here do not receive CVEs unless also present in a stable release) |
+
+<Warning>
+  FreeRDP 2.x is no longer supported. If you are using 2.x, you should migrate to the 3.x stable branch, which contains breaking API/ABI changes but also all current security fixes. CVEs are not issued for issues found only in the `master` development branch.
+</Warning>
+
+---
+
+## Reporting a Vulnerability
+
+**Do not file security vulnerabilities as public GitHub issues.** Public disclosure before a fix is available puts all FreeRDP users at risk.
+
+There are two preferred reporting channels:
+
+<CardGroup cols={2}>
+  <Card title="GitHub Security Advisory" icon="shield-halved" href="https://github.com/FreeRDP/FreeRDP/security/advisories/new">
+    Open a private security advisory directly on GitHub. This is the fastest path — the advisory is visible only to maintainers until disclosure.
+  </Card>
+  <Card title="Email (GPG encrypted)" icon="envelope">
+    Send email to **security@freerdp.com**. For confidential reports, encrypt using the [FreeRDP Security Team GPG key](https://pub.freerdp.com/FreeRDP-security-team.pub.asc).
+  </Card>
+</CardGroup>
+
+### Disclosure Procedure
+
+Once a report is received, the FreeRDP security team will:
+
+1. **Acknowledge** receipt and assign a primary contact from the team.
+2. **Review and confirm** the reported issue as quickly as possible.
+3. **Determine affected versions** and create a private GitHub Security Advisory draft if one does not already exist.
+4. **Request a CVE** identifier if the issue qualifies.
+5. **Fix the issue** on a private branch, checking for similar patterns in the surrounding code.
+6. **Release and publish** — once validated, new releases are published for all supported versions and the advisory is made public.
+
+The project publishes advisories and CVEs at: [https://github.com/FreeRDP/FreeRDP/security/advisories](https://github.com/FreeRDP/FreeRDP/security/advisories)
+
+---
+
+## Code Quality and Static Analysis
+
+FreeRDP uses continuous automated code-quality tools to catch security-relevant issues early:
+
+- **Coverity Scan** — static analysis; badge and results at [https://scan.coverity.com/projects/freerdp](https://scan.coverity.com/projects/freerdp)
+- **CodeQL** — GitHub-integrated semantic code analysis on every push to `master`
+- **clang-tidy** — applied automatically on pull requests
+- **ABI checker** — ensures binary compatibility across patch releases
+- **OSS-Fuzz** — continuous fuzz testing (enabled via `BUILD_FUZZERS=ON`)
+
+---
+
+## Authentication Methods
+
+FreeRDP supports multiple authentication modes negotiated during the RDP connection sequence. The method used has significant security implications.
+
+<Accordion title="NLA — Network Level Authentication (recommended)">
+  **Security level: High**
+
+  Network Level Authentication performs user authentication *before* the full RDP session is established. Credentials are protected by CredSSP (Credential Security Support Provider), which in turn uses TLS and SPNEGO/NTLM or Kerberos. NLA prevents unauthenticated access to the RDP login screen and protects against many pre-authentication vulnerabilities.
+
+  - Kerberos (MIT or Heimdal) is preferred when available; requires `-DWITH_KRB5=ON`.
+  - Smartcard NLA logon is supported with PKCS#11 (`-DWITH_PKCS11=ON`) and PC/SC (`-DWITH_PCSC=ON`).
+  - FIDO2/WebAuthn authentication is available in 3.x via `AUTH_FIDO_PIN`.
+  - Azure AD / Entra authentication requires JSON support (`-DWITH_AAD=ON`).
+
+  **Command-line:** NLA is the default when the server advertises it.
+</Accordion>
+
+<Accordion title="TLS — TLS Security Layer">
+  **Security level: Medium**
+
+  The RDP session is tunnelled over TLS but without pre-authentication NLA. The user's credentials are transmitted inside the encrypted TLS channel during the RDP login phase. Certificate verification is critical here — connecting to an untrusted certificate (or ignoring certificate warnings) is a man-in-the-middle risk.
+
+  As of FreeRDP 3.27.0, the default TLS security level is **2** and a minimum TLS version of **1.2** is enforced. These can be tuned with `/tls:seclevel:<n>` and `/tls:enforce:<version>` on the command line, or via `FreeRDP_TLSMinVersion` / `FreeRDP_TlsSecLevel` in the settings API.
+</Accordion>
+
+<Accordion title="RDP — RDP Security Layer (legacy)">
+  **Security level: Low — avoid if possible**
+
+  The classic RDP security layer uses RC4 encryption with MD5/SHA1-based MACs, all negotiated without certificate verification. It is vulnerable to downgrade attacks and passive eavesdropping with sufficient compute resources. This mode exists only for compatibility with very old servers (pre-Windows XP SP3) and should be avoided in any modern deployment.
+
+  RC4, MD4, and MD5 can be provided by FreeRDP's built-in implementations when the system SSL library no longer includes them (`-DWITH_INTERNAL_RC4=ON`, `-DWITH_INTERNAL_MD4=ON`, `-DWITH_INTERNAL_MD5=ON`).
+</Accordion>
+
+<Accordion title="RDSTLS — Restricted Admin / Protected Users">
+  **Security level: High (specific scenarios)**
+
+  `AUTH_RDSTLS` is used in Restricted Admin mode and with Protected Users, where credentials are not forwarded to the remote server. This mode does not expose the user's password to the server and is suitable for privileged access workstations.
+</Accordion>
+
+---
+
+## Certificate Verification
+
+Correct certificate verification is essential to prevent man-in-the-middle attacks on RDP connections that use TLS or NLA security. FreeRDP exposes a callback-based API for certificate verification. Callbacks receive a bitmask of `VERIFY_CERT_FLAG_*` values defined in `include/freerdp/freerdp.h`:
+
+| Flag | Value | Meaning |
+|------|-------|---------|
+| `VERIFY_CERT_FLAG_NONE` | `0x00` | Standard certificate verification (normal new connection). |
+| `VERIFY_CERT_FLAG_LEGACY` | `0x02` | The certificate is being validated using a legacy code path. |
+| `VERIFY_CERT_FLAG_REDIRECT` | `0x10` | The connection is being validated after a server-side redirect. |
+| `VERIFY_CERT_FLAG_GATEWAY` | `0x20` | The certificate belongs to an RD Gateway, not the final RDP host. |
+| `VERIFY_CERT_FLAG_CHANGED` | `0x40` | The server's certificate has changed since the last connection to this host. |
+| `VERIFY_CERT_FLAG_MISMATCH` | `0x80` | The server's hostname does not match the certificate's Common Name / SAN. |
+| `VERIFY_CERT_FLAG_MATCH_LEGACY_SHA1` | `0x100` | The certificate matches a stored SHA-1 fingerprint (legacy trust store). |
+| `VERIFY_CERT_FLAG_FP_IS_PEM` | `0x200` | The fingerprint parameter in the callback is a PEM-encoded certificate rather than a raw hash. |
+
+<Warning>
+  Any application that silently accepts certificates with `VERIFY_CERT_FLAG_CHANGED` or `VERIFY_CERT_FLAG_MISMATCH` without prompting the user is vulnerable to man-in-the-middle attacks. Always warn users and require explicit confirmation when these flags are set.
+</Warning>
+
+FreeRDP client applications (xfreerdp, sdlfreerdp) store accepted certificate fingerprints in the user's configuration directory and alert users when a certificate changes. When developing against the FreeRDP API, implement the `pVerifyCertificateEx` and `pVerifyChangedCertificateEx` callbacks and respect these flags.
+
+---
+
+## Gateway Authentication
+
+FreeRDP supports RD Gateway connections for traversing firewalls. Three authentication types are available for gateway connections:
+
+| Type | Description |
+|------|-------------|
+| `GW_AUTH_HTTP` | HTTP Basic authentication to the RD Gateway. |
+| `GW_AUTH_RDG` | RD Gateway native protocol authentication. |
+| `GW_AUTH_RPC` | RPC/HTTPS gateway authentication (classic Windows RD Gateway). |
+
+The gateway certificate is verified using the same `VERIFY_CERT_FLAG_GATEWAY` callback flag, and the fingerprint should be pinned whenever possible.
+
+---
+
+## Security Hardening Recommendations
+
+<CardGroup cols={2}>
+  <Card title="Use NLA whenever possible" icon="lock">
+    Configure servers to require NLA. FreeRDP will negotiate NLA by default when the server advertises it. Avoid `/sec:rdp` or `/sec:tls` unless compatibility requires it.
+  </Card>
+  <Card title="Pin certificates" icon="certificate">
+    Store certificate fingerprints on first connection and treat any subsequent change as a security event requiring user confirmation.
+  </Card>
+  <Card title="Keep FreeRDP updated" icon="arrow-up-right-dots">
+    Only FreeRDP 3.x receives security fixes. Subscribe to GitHub Security Advisories for the FreeRDP repository to get notified of new CVEs.
+  </Card>
+  <Card title="Avoid debug builds in production" icon="triangle-exclamation">
+    Never deploy builds with `WITH_DEBUG_NLA`, `WITH_DEBUG_LICENSE`, `WITH_DEBUG_CERTIFICATE`, or `WITH_DEBUG_ALL` enabled — these options log sensitive credential material.
+  </Card>
+</CardGroup>

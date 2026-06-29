@@ -1,0 +1,344 @@
+---
+title: "WLog Logging System: Hierarchy, Levels, and Appenders"
+sidebarTitle: "Logging"
+description: "WLog provides hierarchical logging for FreeRDP and WinPR. Covers 7 log levels, 8 environment variables, all appender types, format tokens, and C examples."
+---
+
+WLog is the structured logging subsystem shared by both WinPR and FreeRDP. Its design is inspired by Java's Log4j: loggers form a dot-separated hierarchy, each logger can have its own level and appender, and a child logger that has not been explicitly configured inherits from its parent. This lets you silence the entire library at one level while turning on verbose tracing for a single subsystem.
+
+## Logger Hierarchy
+
+Logger names use dot-separated namespaces. A child logger is any logger whose name starts with a parent's name followed by a dot. FreeRDP's own loggers follow the convention defined in `<freerdp/log.h>`:
+
+```c
+/* from <freerdp/log.h> */
+#define FREERDP_TAG(tag)  "com.freerdp." tag
+#define SERVER_TAG(tag)   FREERDP_TAG("server.") tag
+#define CLIENT_TAG(tag)   FREERDP_TAG("client.") tag
+```
+
+So the clipboard channel client logs to `com.freerdp.client.channels.cliprdr`, which is a child of `com.freerdp.client.channels`, which is a child of `com.freerdp.client`, and so on up to the root logger.
+
+A logger that has `WLOG_LEVEL_INHERIT` as its level delegates every level check to its parent, recursively, until a logger with an explicit level is found.
+
+## Log Levels
+
+WLog defines seven levels ordered from most verbose to most silent. The configured level acts as a **minimum threshold**: a logger set to `WLOG_WARN` will print `WLOG_WARN`, `WLOG_ERROR`, and `WLOG_FATAL` messages, but will silently discard `WLOG_INFO`, `WLOG_DEBUG`, and `WLOG_TRACE`.
+
+```c
+typedef enum {
+    WLOG_TRACE = 0,   /* everything, including raw packet hexdumps */
+    WLOG_DEBUG = 1,   /* developer debug information */
+    WLOG_INFO  = 2,   /* general operational information */
+    WLOG_WARN  = 3,   /* unexpected but recoverable conditions */
+    WLOG_ERROR = 4,   /* errors requiring attention */
+    WLOG_FATAL = 5,   /* unrecoverable errors */
+    WLOG_OFF   = 6,   /* disable all output */
+    WLOG_LEVEL_INHERIT = 0xFFFF  /* use parent's level */
+} wLogLevel;
+```
+
+## Environment Variables
+
+All WLog behaviour can be controlled at runtime via environment variables — no source code changes or recompilation needed.
+
+| Variable | Description |
+|---|---|
+| `WLOG_APPENDER` | Choose the output destination. Values: `CONSOLE`, `FILE`, `BINARY`, `SYSLOG`, `JOURNALD`, `UDP` |
+| `WLOG_LEVEL` | Minimum log level for the root logger. Values: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`, `OFF` |
+| `WLOG_PREFIX` | Format string for the log prefix (see [Format Tokens](#format-tokens)) |
+| `WLOG_FILTER` | Comma-separated list of logger-name patterns to include; unmatched loggers are silenced |
+| `WLOG_FILEAPPENDER_OUTPUT_FILE_PATH` | Directory for the file/binary appender output |
+| `WLOG_FILEAPPENDER_OUTPUT_FILE_NAME` | Filename for the file/binary appender output |
+| `WLOG_JOURNALD_ID` | Application identifier sent to journald (default: `winpr`) |
+| `WLOG_UDP_TARGET` | `host:port` target for the UDP appender (default: `127.0.0.1:20000`) |
+
+### Examples
+
+```bash
+# Print DEBUG and above, show function and thread in the prefix
+WLOG_LEVEL=DEBUG \
+WLOG_PREFIX="pid=%pid:tid=%tid:fn=%fn -" \
+xfreerdp /v:rdp.example.com
+
+# Trace only the clipboard and GFX channels, silence everything else
+WLOG_LEVEL=OFF \
+WLOG_FILTER="com.freerdp.client.channels.cliprdr,com.freerdp.client.channels.rdpgfx" \
+WLOG_FILTER_LEVEL=TRACE \
+xfreerdp /v:rdp.example.com
+
+# Write all output to a file
+WLOG_APPENDER=FILE \
+WLOG_FILEAPPENDER_OUTPUT_FILE_PATH=/tmp \
+WLOG_FILEAPPENDER_OUTPUT_FILE_NAME=freerdp.log \
+xfreerdp /v:rdp.example.com
+
+# Stream log messages over UDP for live monitoring
+WLOG_APPENDER=UDP \
+WLOG_UDP_TARGET=127.0.0.1:20000 \
+xfreerdp /v:rdp.example.com
+# Receive with: nc -u 127.0.0.1 -p 20000 -l
+```
+
+## Format Tokens
+
+The `WLOG_PREFIX` string (or the value passed to `WLog_Layout_SetPrefixFormat`) may embed any of the following tokens, each prefixed by `%`:
+
+| Token | Description | Example output |
+|---|---|---|
+| `%lv` | Log level abbreviation | `INFO`, `WARN` |
+| `%mn` | Module (logger) name | `com.freerdp.client` |
+| `%fl` | Source file name | `cliprdr_client.c` |
+| `%fn` | Function name | `cliprdr_send_format_list` |
+| `%ln` | Line number | `247` |
+| `%pid` | Process ID | `12345` |
+| `%tid` | Thread ID | `7f8a…` |
+| `%yr` | Year (4 digits) | `2025` |
+| `%mo` | Month (01–12) | `06` |
+| `%dw` | Day of week (0=Sunday) | `2` |
+| `%hr` | Hour (00–23) | `14` |
+| `%mi` | Minute (00–59) | `35` |
+| `%se` | Second (00–59) | `07` |
+| `%ml` | Millisecond (000–999) | `123` |
+
+<Note>
+A single format string may contain up to **16** tokens.
+</Note>
+
+Compact timestamp + context prefix example:
+
+```bash
+WLOG_PREFIX="%yr-%mo-%dw %hr:%mi:%se.%ml [%pid/%tid] %lv %mn -"
+```
+
+produces lines like:
+
+```
+2025-06-02 14:35:07.123 [12345/7f8a] INFO com.freerdp.client.channels.cliprdr - ...
+```
+
+## Appender Types
+
+### Console (default)
+
+Writes to standard output/error. Set `outputstream` to `stdout`, `stderr`, or `default` (errors/fatals go to stderr, everything else to stdout).
+
+```c
+wLogAppender* appender = WLog_GetLogAppender(log);
+WLog_ConfigureAppender(appender, "outputstream", (void*)"stderr");
+```
+
+### File
+
+Writes formatted text to a file. Configure with:
+
+```c
+WLog_ConfigureAppender(appender, "outputfilepath", (void*)"/var/log");
+WLog_ConfigureAppender(appender, "outputfilename", (void*)"freerdp.log");
+```
+
+Or set `WLOG_FILEAPPENDER_OUTPUT_FILE_PATH` / `WLOG_FILEAPPENDER_OUTPUT_FILE_NAME`.
+
+### Binary
+
+Writes structured binary records to a file (useful for post-processing or replay). Same path/filename options as the File appender.
+
+### Callback
+
+Routes every log message to a function pointer you supply. Useful when embedding FreeRDP in an application that has its own logging framework:
+
+```c
+static BOOL my_log_callback(const wLogMessage* msg)
+{
+    fprintf(stderr, "[%s] %s\n", msg->FunctionName, msg->TextString);
+    return TRUE;
+}
+
+wLogCallbacks callbacks = { .message = my_log_callback };
+WLog_ConfigureAppender(appender, "callbacks", &callbacks);
+```
+
+### UDP
+
+Sends each formatted log line as a UDP datagram to the configured `host:port`. The default target is `127.0.0.1:20000`. Receive with netcat:
+
+```bash
+nc -u 127.0.0.1 -p 20000 -l
+```
+
+### Syslog *(optional, Linux only)*
+
+Forwards log entries to the system syslog daemon. Requires WinPR to be built with syslog support. No additional configuration options.
+
+### Journald *(optional, Linux systemd only)*
+
+Sends structured log entries to the systemd journal. Set the application identifier with:
+
+```bash
+WLOG_JOURNALD_ID=my-rdp-app xfreerdp /v:host
+```
+
+Or programmatically:
+
+```c
+WLog_ConfigureAppender(appender, "identifier", (void*)"my-rdp-app");
+```
+
+## Using WLog from C
+
+### Getting a Logger
+
+```c
+#include <winpr/wlog.h>
+
+/* Get (or create) a named logger — cheap after the first call */
+wLog* log = WLog_Get("com.myapp.networking");
+
+/* Get the global root logger */
+wLog* root = WLog_GetRoot();
+
+/* Create an independent logger not managed by the hierarchy
+ * (useful in multi-tenant / multi-instance scenarios) */
+wLog* isolated = WLog_Create("com.myapp.session.42", root);
+/* ... use isolated ... */
+WLog_Discard(isolated);
+```
+
+### Setting the Level Programmatically
+
+```c
+/* Set by enum constant */
+WLog_SetLogLevel(log, WLOG_DEBUG);
+
+/* Set by string (useful when reading from config) */
+WLog_SetStringLogLevel(log, "WARN");
+
+/* Add a runtime filter (supplements WLOG_FILTER) */
+WLog_AddStringLogFilters("com.freerdp.channels.rdpgfx:TRACE");
+```
+
+### Logging Macros
+
+The recommended way to emit log messages is through the tag-based macros, which cache the `wLog*` pointer across calls using a `static` variable:
+
+```c
+#define TAG  "com.myapp.networking"
+
+/* Short-form level macros */
+WLog_VRB(TAG, "enter function");           /* TRACE */
+WLog_DBG(TAG, "got packet len=%zu", len);  /* DEBUG */
+WLog_INFO(TAG, "connected to %s", host);   /* INFO  */
+WLog_WARN(TAG, "retry %d of %d", i, max);  /* WARN  */
+WLog_ERR(TAG, "send failed: %s",
+         strerror(errno));                 /* ERROR */
+WLog_FATAL(TAG, "out of memory");          /* FATAL */
+
+/* Explicit level */
+WLog_LVL(TAG, WLOG_INFO, "custom level message");
+```
+
+When you have a `wLog*` pointer directly:
+
+```c
+wLog* log = WLog_Get(TAG);
+
+/* Check level before formatting to avoid expensive string ops */
+if (WLog_IsLevelActive(log, WLOG_DEBUG))
+    WLog_Print(log, WLOG_DEBUG, "value=%d", compute_expensive_value());
+```
+
+### Setting Up the Appender
+
+```c
+/* Switch the root logger to the File appender at startup */
+wLog* root = WLog_GetRoot();
+WLog_SetLogLevel(root, WLOG_DEBUG);
+WLog_SetLogAppenderType(root, WLOG_APPENDER_FILE);
+
+wLogAppender* appender = WLog_GetLogAppender(root);
+WLog_ConfigureAppender(appender, "outputfilepath", (void*)"/tmp");
+WLog_ConfigureAppender(appender, "outputfilename", (void*)"session.log");
+WLog_OpenAppender(root);
+
+/* ... application runs ... */
+
+WLog_CloseAppender(root);
+```
+
+### Customising the Prefix Layout
+
+```c
+wLog*       log    = WLog_GetRoot();
+wLogLayout* layout = WLog_GetLogLayout(log);
+WLog_Layout_SetPrefixFormat(log, layout,
+    "%yr-%mo-%dw %hr:%mi:%se.%ml [%pid] %lv %mn");
+```
+
+## Complete Example
+
+```c
+#include <winpr/wlog.h>
+#include <freerdp/log.h>  /* for FREERDP_TAG / CLIENT_TAG */
+
+/* Declare a module-level tag */
+#define TAG CLIENT_TAG("mymodule")
+
+static BOOL setup_logging(void)
+{
+    wLog* root = WLog_GetRoot();
+    if (!root)
+        return FALSE;
+
+    /* Use debug level during development */
+    if (!WLog_SetLogLevel(root, WLOG_DEBUG))
+        return FALSE;
+
+    /* Customise the prefix to show timestamp, PID, and function */
+    wLogLayout* layout = WLog_GetLogLayout(root);
+    if (!WLog_Layout_SetPrefixFormat(root, layout,
+            "%hr:%mi:%se.%ml [%pid] %lv %fn -"))
+        return FALSE;
+
+    return TRUE;
+}
+
+BOOL connect_to_server(const char* host, int port)
+{
+    WLog_INFO(TAG, "Connecting to %s:%d", host, port);
+
+    if (!host || port <= 0)
+    {
+        WLog_ERR(TAG, "Invalid arguments: host=%s port=%d",
+                 host ? host : "(null)", port);
+        return FALSE;
+    }
+
+    /* Simulate connection steps */
+    WLog_DBG(TAG, "Resolving hostname: %s", host);
+    WLog_DBG(TAG, "Opening TCP socket to %s:%d", host, port);
+    WLog_INFO(TAG, "Connection established");
+    return TRUE;
+}
+
+int main(void)
+{
+    if (!setup_logging())
+        return 1;
+
+    connect_to_server("rdp.example.com", 3389);
+    connect_to_server(NULL, -1);   /* will log an error */
+    return 0;
+}
+```
+
+Running this produces output similar to:
+
+```
+14:35:07.123 [12345] INFO setup_logging - (no message, implicit)
+14:35:07.124 [12345] INFO connect_to_server - Connecting to rdp.example.com:3389
+14:35:07.124 [12345] DEBUG connect_to_server - Resolving hostname: rdp.example.com
+14:35:07.125 [12345] DEBUG connect_to_server - Opening TCP socket to rdp.example.com:3389
+14:35:07.126 [12345] INFO connect_to_server - Connection established
+14:35:07.127 [12345] INFO connect_to_server - Connecting to (null):-1
+14:35:07.127 [12345] ERROR connect_to_server - Invalid arguments: host=(null) port=-1
+```

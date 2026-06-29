@@ -1,0 +1,386 @@
+---
+title: "FreeRDP RDP Proxy: Architecture and Module System"
+sidebarTitle: "RDP Proxy"
+description: "Learn how the FreeRDP RDP proxy works, how to configure it via INI file, and how to write a custom proxy module for session recording or access control."
+---
+
+The FreeRDP proxy sits transparently between an RDP client and a real RDP server. It accepts inbound connections acting as a server (`pf_server`), simultaneously opens an outbound connection to the configured target acting as a client (`pf_client`), and forwards RDP traffic in both directions. This dual-role design makes the proxy an ideal foundation for session recording, access control enforcement, protocol inspection, MFA injection, and dynamic connection routing — without requiring any modification to the real RDP server or to the connecting clients.
+
+## Architecture
+
+```
+RDP Client ──── [TLS] ──── pf_server ──── proxyData ──── pf_client ──── [TLS] ──── RDP Server
+                               │                              │
+                               └──── Module hook/filter ─────┘
+```
+
+Each accepted connection creates a `proxyData` object that binds together the inbound `pf_server` context (a `freerdp_peer`) and the outbound `pf_client` context (a `freerdp` client instance). All traffic passes through the module hook and filter pipeline before being forwarded, giving plugins the ability to inspect, modify, or drop any PDU.
+
+### Key source files
+
+| File | Role |
+|---|---|
+| `pf_server.c` | `freerdp_listener` setup; spawns one thread per accepted peer |
+| `pf_client.c` | Outbound RDP client; connects to `TargetHost:TargetPort` |
+| `pf_config.c` | INI file parsing into `proxyConfig` |
+| `pf_modules.c` | Dynamic module loader; hook and filter dispatch |
+| `pf_update.c` | Forwards graphical update PDUs (bitmap, surface, GFX) |
+| `pf_input.c` | Forwards keyboard, mouse, and touch events |
+| `pf_channel.c` | Static and dynamic virtual channel routing |
+
+## Configuration File
+
+The proxy is configured with an INI file whose sections map directly onto `proxyConfig` fields. Generate a commented default file with:
+
+```bash
+freerdp-proxy --dump-config proxy.ini
+```
+
+### Full annotated configuration
+
+```ini
+[Server]
+# Address the proxy listens on (default: 0.0.0.0)
+Host=0.0.0.0
+# Listening port (default: 3389)
+Port=3389
+# SAM database file for NLA user authentication on the server side
+SamFile=/etc/freerdp/proxy.sam
+
+[Target]
+# Connect every client to the same backend (FixedTarget=true)
+# or let a module resolve the target dynamically (FixedTarget=false)
+FixedTarget=true
+Host=rdp-backend.internal
+Port=3389
+
+# Optional: pre-configure credentials for the outbound connection
+User=proxyuser
+Password=secret
+Domain=CORP
+
+# Minimum TLS security level for the outbound connection (0–5, OpenSSL)
+TlsSecLevel=1
+
+# Smartcard authentication towards the target
+SmartcardAuth=false
+
+[Security]
+# Inbound (client → proxy) security modes
+ServerNlaSecurity=true
+ServerTlsSecurity=true
+ServerRdpSecurity=false
+
+# Outbound (proxy → target) security modes
+ClientNlaSecurity=true
+ClientTlsSecurity=true
+ClientRdpSecurity=false
+ClientAllowFallbackToTls=true
+
+[Certificates]
+# TLS certificate presented to connecting RDP clients
+CertificateFile=/etc/freerdp/proxy.crt
+PrivateKeyFile=/etc/freerdp/proxy.key
+
+# Alternatively embed PEM content directly (base64-encoded)
+# CertificateContent=<base64>
+# PrivateKeyContent=<base64>
+
+[Input]
+Keyboard=true
+Mouse=true
+Multitouch=false
+
+[Channels]
+GFX=true
+DisplayControl=true
+Clipboard=true
+AudioOutput=true
+AudioInput=false
+RemoteApp=false
+DeviceRedirection=false
+VideoRedirection=false
+CameraRedirection=false
+
+# Passthrough lists channels by name for transparent forwarding.
+# Set PassthroughIsBlacklist=true to invert: listed channels are blocked.
+PassthroughIsBlacklist=false
+Passthrough=rdpdbg,MS_T120
+
+# Channels listed here are intercepted and passed to registered modules.
+Intercept=cliprdr
+
+[Codecs]
+RFX=true
+NSC=true
+
+[Plugins]
+# Comma-separated list of module names to load at startup.
+# The proxy searches <installdir>/lib/freerdp3/proxy/proxy-<name>-plugin.so
+Modules=demo,recorder
+# Modules that must load successfully; proxy refuses to start if any fail.
+Required=recorder
+```
+
+### `proxyConfig` struct fields
+
+The INI parser populates the `proxyConfig` struct defined in `include/freerdp/server/proxy/proxy_config.h`:
+
+```c
+struct proxy_config
+{
+    /* [Server] */
+    char*   Host;
+    UINT16  Port;
+
+    /* [Target] */
+    BOOL    FixedTarget;
+    char*   TargetHost;
+    UINT16  TargetPort;
+    char*   TargetUser;
+    char*   TargetDomain;
+    char*   TargetPassword;
+    UINT32  TargetTlsSecLevel;
+
+    /* [Input] */
+    BOOL    Keyboard;
+    BOOL    Mouse;
+    BOOL    Multitouch;
+
+    /* [Security] — server side */
+    BOOL    ServerTlsSecurity;
+    BOOL    ServerRdpSecurity;
+    BOOL    ServerNlaSecurity;
+
+    /* [Security] — client side */
+    BOOL    ClientNlaSecurity;
+    BOOL    ClientTlsSecurity;
+    BOOL    ClientRdpSecurity;
+    BOOL    ClientAllowFallbackToTls;
+
+    /* [Channels] */
+    BOOL    GFX;
+    BOOL    DisplayControl;
+    BOOL    Clipboard;
+    BOOL    AudioOutput;
+    BOOL    AudioInput;
+    BOOL    RemoteApp;
+    BOOL    DeviceRedirection;
+    BOOL    VideoRedirection;
+    BOOL    CameraRedirection;
+    BOOL    PassthroughIsBlacklist;
+    char**  Passthrough;
+    size_t  PassthroughCount;
+    char**  Intercept;
+    size_t  InterceptCount;
+
+    /* [Codecs] */
+    BOOL    RFX;
+    BOOL    NSC;
+
+    /* [Plugins] */
+    char**  Modules;
+    size_t  ModulesCount;
+    char**  RequiredPlugins;
+    size_t  RequiredPluginsCount;
+};
+```
+
+Load a config file in your code:
+
+```c
+#include <freerdp/server/proxy/proxy_config.h>
+
+proxyConfig* config = pf_server_config_load_file("/etc/freerdp/proxy.ini");
+/* or from a memory string */
+proxyConfig* config = pf_server_config_load_buffer(ini_string);
+
+pf_server_config_print(config); /* dump to stdout */
+pf_server_config_free(config);
+```
+
+## Building the Proxy
+
+```bash
+cmake -B build -S . \
+  -DWITH_PROXY=ON \
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target freerdp-proxy
+```
+
+<Warning>
+Proxy module shared libraries must be installed into `<prefix>/lib/freerdp3/proxy/` and named `proxy-<name>-plugin.so` (`.dylib` on macOS, `.dll` on Windows). Loading modules by full path is intentionally not supported for security reasons.
+</Warning>
+
+## Running the Proxy
+
+```bash
+freerdp-proxy --config /etc/freerdp/proxy.ini
+```
+
+## Writing a Proxy Module
+
+Proxy modules are shared libraries that export a single entry point: `proxy_module_entry_point`. The proxy calls this function at startup, passing a `proxyPluginsManager*` that the module uses to register a `proxyPlugin`.
+
+### Plugin lifecycle
+
+```c
+/* include/freerdp/server/proxy/proxy_modules_api.h */
+
+/* Entry point every module must export */
+typedef BOOL (*proxyModuleEntryPoint)(proxyPluginsManager* plugins_manager,
+                                      void* userdata);
+
+/* The plugin descriptor — fill in callbacks you care about */
+struct proxy_plugin
+{
+    const char* name;         /* unique module name */
+    const char* description;
+
+    BOOL (*PluginUnload)(proxyPlugin* plugin); /* cleanup */
+
+    /* ── Client-side hooks ────────────────────────────────── */
+    proxyHookFn ClientInitConnect;    /* before outbound connect */
+    proxyHookFn ClientUninitConnect;  /* after outbound disconnect */
+    proxyHookFn ClientPreConnect;     /* client PreConnect callback */
+    proxyHookFn ClientPostConnect;    /* client PostConnect callback */
+    proxyHookFn ClientPostDisconnect;
+    proxyHookFn ClientX509Certificate;
+    proxyHookFn ClientLoginFailure;
+    proxyHookFn ClientEndPaint;
+    proxyHookFn ClientRedirect;
+
+    /* ── Server-side hooks ────────────────────────────────── */
+    proxyHookFn ServerPostConnect;
+    proxyHookFn ServerPeerActivate;
+    proxyHookFn ServerChannelsInit;
+    proxyHookFn ServerChannelsFree;
+    proxyHookFn ServerSessionEnd;
+    proxyHookFn ServerSessionInitialize;
+    proxyHookFn ServerSessionStarted;
+
+    /* ── Filters (return FALSE to drop) ──────────────────── */
+    proxyFilterFn KeyboardEvent;
+    proxyFilterFn MouseEvent;
+    proxyFilterFn UnicodeEvent;
+    proxyFilterFn MouseExEvent;
+    proxyFilterFn ClientChannelData;   /* static channel, client→server */
+    proxyFilterFn ServerChannelData;   /* static channel, server→client */
+    proxyFilterFn DynamicChannelCreate;
+    proxyFilterFn ServerFetchTargetAddr; /* resolve dynamic target */
+    proxyFilterFn ServerPeerLogon;
+    proxyFilterFn DynChannelToIntercept;
+    proxyFilterFn DynChannelIntercept;
+    proxyFilterFn StaticChannelToIntercept;
+
+    /* Runtime fields set by the proxy after registration */
+    proxyPluginsManager* mgr;
+    void* userdata;  /* value passed to RegisterPlugin */
+    void* custom;    /* module-owned; free in PluginUnload */
+};
+```
+
+### Complete C++ module example
+
+The demo module shipped in `server/proxy/modules/demo/demo.cpp` is a complete reference. The pattern is:
+
+```cpp
+#include <freerdp/server/proxy/proxy_modules_api.h>
+
+#define TAG MODULE_TAG("mymodule")
+
+static BOOL my_keyboard_filter(proxyPlugin* plugin,
+                                proxyData* pdata,
+                                void* param)
+{
+    const auto* ev = static_cast<const proxyKeyboardEventInfo*>(param);
+
+    /* returning FALSE drops the keystroke — it will not reach the server */
+    if (ev->rdp_scan_code == RDP_SCANCODE_KEY_B)
+    {
+        plugin->mgr->AbortConnect(plugin->mgr, pdata);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL my_plugin_unload(proxyPlugin* plugin)
+{
+    delete static_cast<MyData*>(plugin->custom);
+    return TRUE;
+}
+
+/* Exported entry point — must be exactly this name */
+extern "C" BOOL proxy_module_entry_point(proxyPluginsManager* mgr,
+                                          void* userdata)
+{
+    proxyPlugin plugin = {};
+    plugin.name        = "mymodule";
+    plugin.description = "Example proxy module";
+    plugin.PluginUnload = my_plugin_unload;
+    plugin.KeyboardEvent = my_keyboard_filter;
+
+    /* Attach custom state */
+    plugin.custom = new MyData();
+
+    return mgr->RegisterPlugin(mgr, &plugin);
+}
+```
+
+### Session-scoped per-connection data
+
+Modules can store and retrieve per-session data using the manager API:
+
+```c
+/* Store a value keyed by plugin name for this session */
+mgr->SetPluginData(mgr, plugin->name, pdata, my_session_state);
+
+/* Retrieve it from any callback */
+MyState* s = (MyState*)mgr->GetPluginData(mgr, plugin->name, pdata);
+
+/* Force-disconnect a session */
+mgr->AbortConnect(mgr, pdata);
+```
+
+### Filter return values
+
+| Return value | Effect |
+|---|---|
+| `TRUE` | Event is forwarded to the peer |
+| `FALSE` | Event is silently dropped; session may be terminated by `AbortConnect` |
+
+## Dynamic Target Resolution
+
+When `FixedTarget=false`, a module can resolve the backend on a per-connection basis by registering a `ServerFetchTargetAddr` filter:
+
+```c
+static BOOL fetch_target(proxyPlugin* plugin,
+                         proxyData* pdata,
+                         void* param)
+{
+    auto* ev = static_cast<proxyFetchTargetEventInfo*>(param);
+
+    /* ev->target_address and ev->target_port are out-parameters */
+    ev->target_address = strdup("dynamic-backend.internal");
+    ev->target_port    = 3389;
+    ev->fetch_method   = PROXY_FETCH_TARGET_METHOD_DIRECT;
+    return TRUE;
+}
+```
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Session Recording" icon="video">
+    Register `ClientChannelData` and `ServerChannelData` filters to capture all channel traffic, then write it to disk using the `dyn-channel-dump` module included in `server/proxy/modules/dyn-channel-dump/` as a reference.
+  </Card>
+  <Card title="Access Control" icon="shield-check">
+    Implement `ServerPeerLogon` to inspect credentials and call `AbortConnect` for unauthorized users, or `ServerFetchTargetAddr` to route different users to different backend pools.
+  </Card>
+  <Card title="Protocol Inspection" icon="magnifying-glass">
+    Use `DynChannelIntercept` combined with `DynChannelToIntercept` to deep-inspect specific dynamic virtual channels such as `MS-RDPECLIP` or `RDPDR` without affecting others.
+  </Card>
+  <Card title="Bitmap Filtering" icon="image">
+    The `bitmap-filter` module in `server/proxy/modules/bitmap-filter/` demonstrates how to intercept and transform graphical surface update PDUs mid-stream.
+  </Card>
+</CardGroup>

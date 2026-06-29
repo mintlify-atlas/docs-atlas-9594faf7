@@ -1,0 +1,157 @@
+---
+title: "Building FreeRDP for iOS: Xcode Project and CMake Setup"
+sidebarTitle: "iOS"
+description: "Pre-build static OpenSSL with the helper script, generate an Xcode project via ios.toolchain.cmake, and build FreeRDP for iOS 4.3+ and the simulator."
+---
+
+The FreeRDP iOS port targets iOS 4.3 and later and is built using CMake with a dedicated iOS toolchain file (`cmake/ios.toolchain.cmake`). Because iOS does not ship OpenSSL headers or libraries, you must build static OpenSSL libraries manually before running CMake. A helper script (`scripts/OpenSSL-DownloadAndBuild.command`) automates the download and multi-architecture compile. After that, a single `cmake` invocation generates a fully configured Xcode project that you can open, modify, and build normally.
+
+## Build Requirements
+
+| Requirement | Minimum version |
+|-------------|----------------|
+| CMake | ≥ 3.13 |
+| Xcode | ≥ 4.6 (latest recommended) |
+| iOS Provisioning Profile + Developer Certificate | Required for device builds; not needed for simulator |
+| Static OpenSSL libraries | Must be pre-built — see below |
+
+## Step 1: Pre-Build Static OpenSSL
+
+iOS's SDK does not include OpenSSL, so FreeRDP cannot link against a system-provided version. The repository provides a script that downloads OpenSSL source and compiles armv7, armv7s, and i386 static libraries into a single universal binary.
+
+<Steps>
+  <Step title="Run the helper script (default output directory)">
+    From the FreeRDP root directory:
+
+    ```bash
+    ./scripts/OpenSSL-DownloadAndBuild.command
+    ```
+
+    Output is written to `external/openssl/` in the repository root. The script uses the oldest iOS / iPhoneSimulator SDK detected on the machine.
+  </Step>
+
+  <Step title="Run with a custom output directory (optional)">
+    Pass the desired install directory as the first argument:
+
+    ```bash
+    ./scripts/OpenSSL-DownloadAndBuild.command /tmp/
+    ```
+
+    With this invocation, the built libraries end up in `/tmp/openssl/`.
+  </Step>
+
+  <Step title="Verify the output">
+    When the script finishes, you should find two universal static libraries in the `lib/` subdirectory of the install path:
+
+    ```
+    external/openssl/lib/libcrypto.a   # Universal (arm + i386)
+    external/openssl/lib/libssl.a      # Universal (arm + i386)
+    ```
+
+    Both are fat binaries containing both ARM device and i386 simulator slices, so a single build can target either platform.
+  </Step>
+</Steps>
+
+<Note>
+  The script builds against the **oldest iOS/iPhoneSimulator SDK** found on the machine by default. To target a specific SDK version, set the `SDK_VERSION` environment variable before running the script. The minimum accepted SDK version can be adjusted with `MIN_SDK_VERSION` inside the script itself.
+</Note>
+
+<Warning>
+  If you built OpenSSL with a custom install directory (anything other than the default `external/`), you must pass the path to CMake via `-DFREERDP_IOS_EXTERNAL_SSL_PATH=<path>` when configuring. See the CMake variables section below.
+</Warning>
+
+## Step 2: Configure with CMake
+
+Run the following commands from the **top-level FreeRDP directory**. CMake generates an Xcode project file (`FreeRDP.xcodeproj`) in the directory where you run the command.
+
+### Device build (default)
+
+```bash
+cmake \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/ios.toolchain.cmake \
+  -GXcode
+```
+
+### Simulator build
+
+```bash
+cmake \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/ios.toolchain.cmake \
+  -DIOS_PLATFORM=SIMULATOR \
+  -GXcode
+```
+
+### Device build with custom OpenSSL path
+
+```bash
+cmake \
+  -DCMAKE_TOOLCHAIN_FILE=cmake/ios.toolchain.cmake \
+  -DFREERDP_IOS_EXTERNAL_SSL_PATH=/tmp/openssl \
+  -GXcode
+```
+
+## Step 3: Build
+
+After CMake generates `FreeRDP.xcodeproj` you can build using either Xcode's GUI or `xcodebuild` from the command line.
+
+<CodeGroup>
+  ```bash xcodebuild CLI
+  xcodebuild \
+    -project FreeRDP.xcodeproj \
+    -configuration Debug \
+    -sdk iphoneos6.1
+  ```
+
+  ```bash cmake --build
+  cmake --build .
+  ```
+
+  ```bash Custom output directory
+  xcodebuild \
+    -project FreeRDP.xcodeproj \
+    -configuration Release \
+    -sdk iphoneos6.1 \
+    CONFIGURATION_BUILD_DIR=/path/to/output
+  ```
+</CodeGroup>
+
+To open the project in Xcode's GUI:
+
+```bash
+open FreeRDP.xcodeproj
+```
+
+Or use **File → Open Other** from the Xcode welcome screen and browse to `FreeRDP.xcodeproj`.
+
+<Note>
+  By default Xcode writes built products to its derived data location (`~/Library/Developer/Xcode/DerivedData/...`). Add `CONFIGURATION_BUILD_DIR=<path>` to the `xcodebuild` command to direct output to a specific directory.
+</Note>
+
+## Switching Between Device and Simulator
+
+Each time you switch `IOS_PLATFORM` between `OS` (device) and `SIMULATOR`, you **must** delete the CMake cache and generated files before re-running `cmake`:
+
+```bash
+rm CMakeCache.txt
+rm -rf CMakeFiles/
+```
+
+Failure to do so causes build errors due to stale CMake state — this is a known limitation of the CMake iOS toolchain integration.
+
+## CMake Variable Reference
+
+| Variable | Description |
+|----------|-------------|
+| `CMAKE_TOOLCHAIN_FILE` | Must be `cmake/ios.toolchain.cmake` |
+| `IOS_PLATFORM` | `OS` *(default)* — armv7 + armv7s device ABIs; `SIMULATOR` — i386 simulator |
+| `CMAKE_IOS_DEVELOPER_ROOT` | Absolute path to the iOS developer platform. Auto-detected from `IOS_PLATFORM` by the toolchain file (e.g. `/Applications/Xcode.app/Contents/Developer/Platforms/iPhoneOS.platform/Developer`) |
+| `CMAKE_IOS_SDK_ROOT` | Absolute path to the iOS SDK. Auto-detected by the toolchain file (e.g. `/Applications/Xcode.app/.../iPhoneOS6.1.sdk`) |
+| `FREERDP_IOS_EXTERNAL_SSL_PATH` | Absolute root path of the pre-built static OpenSSL libraries. Defaults to `external/openssl` inside the repository root |
+| `CODE_SIGN_IDENTITY` | Code-signing identity to use when building for a physical device |
+
+## Optional Dependencies
+
+| Dependency | Purpose |
+|------------|---------|
+| cJSON | Azure AD / Azure account logon support |
+| MIT Kerberos / Heimdal | Enterprise Kerberos authentication |

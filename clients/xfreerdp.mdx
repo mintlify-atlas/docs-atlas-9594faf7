@@ -1,0 +1,264 @@
+---
+title: "xfreerdp — FreeRDP Client for X11 Linux Desktops"
+sidebarTitle: "xfreerdp"
+description: "Guide to xfreerdp: basic usage, connection examples, display and monitor options, clipboard, drive redirection, RemoteFX, audio, and keyboard shortcuts."
+---
+
+`xfreerdp` is the original FreeRDP client for the X Window System. It connects to any standard RDP server — Windows Remote Desktop, xrdp, ogon, gnome-remote-desktop, or VirtualBox VRDP — and exposes the full FreeRDP feature set including RemoteFX, NLA authentication, multi-monitor layouts, device redirection, and clipboard integration. Because it is built directly on Xlib it integrates tightly with X11 conventions: it respects EWMH window manager hints, uses the X selection clipboard, and can respond to X events through an optional action script.
+
+## Synopsis
+
+```
+xfreerdp [file] [options] [/v:server[:port]]
+```
+
+The client accepts an optional `.rdp` configuration file as the first positional argument, followed by any number of `/key:value` options. Boolean options can be toggled with `+option` (enable) or `-option` (disable).
+
+## Quick-start examples
+
+<CodeGroup>
+
+```bash Basic connection
+xfreerdp /v:rdp.example.com
+```
+
+```bash With credentials
+xfreerdp /v:rdp.example.com /u:JohnDoe /p:Pwd123!
+```
+
+```bash Domain account
+xfreerdp /v:rdp.example.com /u:CONTOSO\\JohnDoe /p:Pwd123!
+```
+
+```bash Custom port
+xfreerdp /v:192.168.1.100:4489 /u:JohnDoe /p:Pwd123!
+```
+
+```bash Fullscreen
+xfreerdp /v:rdp.example.com /u:alice /f
+```
+
+```bash Specific window size
+xfreerdp /v:rdp.example.com /u:JohnDoe /p:Pwd123! /w:1366 /h:768
+```
+
+```bash Half the screen height
+xfreerdp /v:rdp.contoso.com /u:USER /size:50%h
+```
+
+```bash Multi-monitor
+xfreerdp /v:rdp.example.com /multimon
+```
+
+```bash Load an .rdp file with a password override
+xfreerdp connection.rdp /p:Pwd123! /f
+```
+
+</CodeGroup>
+
+## Display and geometry options
+
+| Option | Description |
+|---|---|
+| `/w:<width>` | Session width in pixels (default: 1024) |
+| `/h:<height>` | Session height in pixels (default: 768) |
+| `/size:<W>x<H>` or `<pct>%[wh]` | Combined width/height or percentage of the local display |
+| `/f` | Start in fullscreen mode; `Ctrl+Alt+Enter` toggles |
+| `/workarea` | Use the available work area (excludes panels/taskbars) |
+| `/multimon` | Span the session across all connected monitors |
+| `/multimon:force` | Force multi-monitor mode even when the server does not advertise it |
+| `/span` | Span the desktop across multiple monitors (legacy) |
+| `/monitors:<id>[,<id>]` | Use specific monitor IDs (see `/list:monitor`) |
+| `/dynamic-resolution` | Notify the server when the local window is resized |
+| `/smart-sizing[:<W>x<H>]` | Scale the remote desktop to fit the local window |
+| `/scale:[100\|140\|180]` | Display scaling factor |
+| `/scale-desktop:<pct>` | Scaling for desktop applications (100–500) |
+
+```bash
+# Fullscreen on a specific pair of monitors
+xfreerdp /v:rdp.example.com /multimon /monitors:0,1
+
+# Dynamic resize support
+xfreerdp /v:rdp.example.com /dynamic-resolution /w:1280 /h:800
+```
+
+## Authentication options
+
+| Option | Description |
+|---|---|
+| `/u:<user>` | Username (optionally `DOMAIN\user` or `user@domain`) |
+| `/d:<domain>` | Windows domain |
+| `/p:<password>` | Password (omit to be prompted) |
+| `/sec:nla` | Force Network Level Authentication |
+| `/sec:tls` | Force TLS security only |
+| `/sec:rdp` | Force classic RDP security |
+| `/cert:ignore` | Skip all certificate checks (use with care) |
+| `/cert:deny` | Abort if the certificate is untrusted |
+| `/cert:tofu` | Accept on first connect, reject on mismatch thereafter |
+| `/cert:fingerprint:<hash>:<hex>` | Accept a specific certificate fingerprint |
+| `/tls:seclevel:<0-5>` | Override the OpenSSL TLS security level |
+| `/smartcard-logon` | Authenticate using a smart card |
+
+```bash
+# NLA with a domain account
+xfreerdp /v:rdp.example.com /u:alice /d:CORP /sec:nla
+
+# Accept only a known fingerprint
+xfreerdp /v:rdp.example.com /cert:fingerprint:sha256:AA:BB:CC:...
+```
+
+## Channel and device redirection
+
+<Tabs>
+  <Tab title="Clipboard">
+    Clipboard redirection is enabled by passing `+clipboard` (or the Boolean `/clipboard` flag). The X11 client uses the `CLIPBOARD` selection by default; pass `use-selection:PRIMARY` to use the middle-click X primary selection.
+
+    ```bash
+    # Enable clipboard redirection (both directions)
+    xfreerdp /v:rdp.example.com +clipboard
+
+    # Use the X PRIMARY selection
+    xfreerdp /v:rdp.example.com /clipboard:use-selection:PRIMARY
+
+    # Allow only local→remote direction
+    xfreerdp /v:rdp.example.com /clipboard:direction-to:remote
+    ```
+  </Tab>
+  <Tab title="Drive redirection">
+    Redirect a local directory as a named network share visible inside the Windows session under `\\tsclient\<name>`.
+
+    ```bash
+    # Share /home/user as the "home" drive
+    xfreerdp /v:rdp.example.com /drive:home,/home/user
+
+    # Redirect all mount points
+    xfreerdp /v:rdp.example.com /drives
+
+    # Redirect the user home directory automatically
+    xfreerdp /v:rdp.example.com /home-drive
+
+    # Hotplug support (redirects drives added after connect)
+    xfreerdp /v:rdp.example.com /drive:hotplug,*
+    ```
+  </Tab>
+  <Tab title="Audio">
+    ```bash
+    # Redirect audio output using ALSA
+    xfreerdp /v:rdp.example.com /sound:sys:alsa
+
+    # Redirect microphone input
+    xfreerdp /v:rdp.example.com /microphone:sys:alsa
+
+    # Both simultaneously
+    xfreerdp /v:rdp.example.com /sound:sys:alsa /microphone:sys:alsa
+    ```
+  </Tab>
+  <Tab title="Printer & USB">
+    ```bash
+    # Redirect a printer (name and driver)
+    xfreerdp /v:rdp.example.com /printer:HP_LaserJet,HP\ LaserJet\ P2015
+
+    # Redirect a USB device by vendor:product ID
+    xfreerdp /v:rdp.example.com /usb:id,dev:054c:0268
+
+    # Redirect a serial port
+    xfreerdp /v:rdp.example.com /serial:/dev/ttyS0
+
+    # Redirect a smart card
+    xfreerdp /v:rdp.example.com /smartcard
+    ```
+  </Tab>
+</Tabs>
+
+## Graphics and performance
+
+| Option | Description |
+|---|---|
+| `/gfx` | Enable RDP8 graphics pipeline (AVC420/AVC444/progressive) |
+| `/rfx` | Enable RemoteFX codec |
+| `/bpp:<depth>` | Color depth: 8, 15, 16, 24, or 32 |
+| `/network:[modem\|broadband\|wan\|lan\|auto]` | Tune visual quality presets for the link type |
+| `/compression` | Enable data compression (on by default; use `-compression` to disable) |
+| `/gdi:hw` | Use hardware-accelerated GDI rendering |
+
+```bash
+# LAN-quality session with the GFX pipeline
+xfreerdp /v:rdp.example.com /network:lan /gfx
+
+# RemoteFX for media-rich content
+xfreerdp /v:rdp.example.com /rfx /sound:sys:alsa
+
+# Reduce bandwidth on a slow link
+xfreerdp /v:rdp.example.com /network:modem /bpp:16
+```
+
+## Hyper-V console
+
+Connect directly to a Hyper-V virtual machine console using the VM GUID and port 2179.
+
+```bash
+xfreerdp /v:192.168.1.100 /u:JohnDoe /p:Pwd123! \
+  /vmconnect:C824F53E-95D2-46C6-9A18-23A5BB403532
+```
+
+## Keyboard options
+
+| Option | Description |
+|---|---|
+| `/kbd:layout:<id\|name>` | Override the keyboard layout announced to the server |
+| `/kbd:remap:<from>=<to>` | Remap RDP scancodes (comma-separated list) |
+| `/kbd:unicode[:on\|off]` | Send Unicode key events |
+| `/list:kbd` | List available keyboard layouts |
+| `/list:kbd-scancode` | List RDP scancode assignments |
+
+```bash
+# Swap Left Ctrl (29) and Caps Lock (58)
+xfreerdp /v:rdp.example.com /kbd:remap:29=58,remap:58=29
+```
+
+## The floatbar
+
+The floatbar is a context toolbar that appears at the top of the screen in fullscreen mode. Enable it with `/floatbar`.
+
+```bash
+# Always-visible floatbar
+xfreerdp /v:rdp.example.com /f /floatbar:sticky:on,default:visible,show:always
+
+# Show only in fullscreen, hidden by default
+xfreerdp /v:rdp.example.com /f /floatbar:show:fullscreen,default:hidden
+```
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+Alt+Enter` | Toggle fullscreen |
+| `Ctrl+Alt+M` | Minimize the window |
+| `Ctrl+Alt+D` | Disconnect and exit |
+| `Ctrl+Alt+C` | Toggle remote control in a remote assistance session |
+| `Right Ctrl` | Release keyboard and mouse grab |
+
+## Action scripts
+
+xfreerdp can invoke an external script on key events. Place the script at `$XDG_CONFIG_HOME/freerdp/action.sh` or specify it with `/action-script:<path>`. The script receives the key combination as an argument and prints `key-local` to handle it locally or a program path to execute.
+
+```bash
+xfreerdp /v:rdp.example.com /action-script:/home/alice/.config/freerdp/action.sh
+```
+
+## Global configuration
+
+The X11 client reads a JSON global configuration file at `@SYSCONF_DIR@/xfreerdp.json`. Supported options:
+
+| Key | Type | Description |
+|---|---|---|
+| `isActionScriptAllowed` | boolean | Allow or block action scripts (default: allowed) |
+
+## Remote application (RemoteApp)
+
+Launch a single application instead of a full desktop using the `/app` option.
+
+```bash
+xfreerdp /v:rdp.example.com /u:alice \
+  /app:program:||notepad,name:Notepad
+```

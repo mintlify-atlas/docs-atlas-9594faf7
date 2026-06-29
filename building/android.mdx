@@ -1,0 +1,184 @@
+---
+title: "Building FreeRDP for Android: NDK and Studio Guide"
+sidebarTitle: "Android"
+description: "Build FreeRDP for Android via Android Studio, Gradle CLI, or standalone CMake — NDK ≥ r23, all four ABIs, and automatic superbuild dependencies."
+---
+
+The FreeRDP Android port is made up of three tightly coupled components: the **Android Java GUI** (located in `client/Android/Studio`), the **native FreeRDP library and its dependencies** (built via a CMake superbuild), and the **JNI bindings** that bridge the two (`client/Android/android_freerdp.c` and `LibFreeRDP.java`). All native dependencies — OpenSSL, FFmpeg, Opus, OpenH264, cJSON, libpng, libwebp, libjpeg-turbo, and uriparser — are fetched and compiled automatically by the CMake superbuild on first build, so no manual dependency installation is required beyond the NDK itself.
+
+## Architecture Overview
+
+```
+client/Android/
+├── Studio/                          # Android Studio project root
+│   └── freeRDPCore/
+│       └── src/main/
+│           ├── java/com/freerdp/freerdpcore/services/
+│           │   └── LibFreeRDP.java  # JNI Java side
+│           └── cpp/                 # CMake superbuild entry point
+├── android_freerdp.c                # JNI C bindings
+└── ...
+```
+
+## Build Requirements
+
+| Requirement | Minimum version | Notes |
+|-------------|----------------|-------|
+| CMake | ≥ 3.13 | Install via Android SDK Manager — it is part of SDK Tools |
+| Android NDK | ≥ r23 (NDK 29 recommended) | `ndkVersion` is set in `build.gradle` |
+| Android SDK | Any recent version | Required for the Java GUI |
+| Internet access | — | First build downloads all native dependencies automatically |
+
+### Optional dependencies
+
+- **cJSON** — required for logging in to Azure AD accounts (fetched automatically by the superbuild)
+- **Kerberos** — MIT or Heimdal Kerberos for enterprise authentication
+
+## Supported ABIs
+
+| ABI | CMake value |
+|-----|------------|
+| 64-bit ARM | `arm64-v8a` |
+| 32-bit ARM | `armeabi-v7a` |
+| 64-bit x86 | `x86_64` |
+| 32-bit x86 | `x86` |
+
+## Build Method 1: Android Studio
+
+This is the recommended path for most developers. Android Studio handles CMake invocation, Gradle dependency resolution, and APK signing automatically.
+
+<Steps>
+  <Step title="Install Android Studio and NDK">
+    Download Android Studio from [developer.android.com](https://developer.android.com/studio). Inside Android Studio, open **SDK Manager → SDK Tools** and install:
+    - Android NDK (Side by side) — version 29 or the version specified in `build.gradle`
+    - CMake
+  </Step>
+
+  <Step title="Import the project">
+    Open Android Studio and choose **File → Open** (or **Open** from the welcome screen). Navigate to the FreeRDP source tree and select the `client/Android/Studio` folder — not the repository root.
+  </Step>
+
+  <Step title="Build the APK">
+    Android Studio will sync Gradle, trigger the CMake superbuild (which downloads and compiles all native dependencies on first run), and produce an APK. Use **Build → Make Project** or click the Run button to build and deploy directly to a device or emulator.
+  </Step>
+</Steps>
+
+<Note>
+  The first build takes considerably longer than subsequent builds because the CMake superbuild fetches and compiles OpenSSL, FFmpeg, Opus, OpenH264, and several other libraries from source. Subsequent builds reuse the cached artifacts.
+</Note>
+
+## Build Method 2: Gradle CLI
+
+If you prefer the command line or are running in a CI environment, you can drive the build through Gradle directly without opening Android Studio.
+
+<Steps>
+  <Step title="Change to the Studio directory">
+    ```bash
+    cd client/Android/Studio
+    ```
+  </Step>
+
+  <Step title="Build the APK">
+    ```bash
+    ./gradlew build
+    ```
+  </Step>
+
+  <Step title="Explore other Gradle tasks">
+    ```bash
+    ./gradlew tasks
+    ```
+  </Step>
+</Steps>
+
+## Build Method 3: Standalone CMake (Native Libraries Only)
+
+To build only the native `.so` libraries for a specific ABI — useful for integrating FreeRDP into an existing Android app or for automated testing — run CMake directly from the repository root without Android Studio or Gradle.
+
+<Steps>
+  <Step title="Set the NDK path">
+    ```bash
+    export ANDROID_NDK=~/Android/Sdk/ndk/29.0.13113456
+    ```
+
+    Adjust the path to the NDK version actually installed on your machine.
+  </Step>
+
+  <Step title="Configure CMake for the target ABI">
+    <CodeGroup>
+      ```bash arm64-v8a
+      cmake \
+        -S client/Android/Studio/freeRDPCore/src/main/cpp \
+        -B build/android-arm64 \
+        --toolchain $ANDROID_NDK/build/cmake/android.toolchain.cmake \
+        -DANDROID_ABI=arm64-v8a \
+        -DANDROID_PLATFORM=android-23 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -GNinja
+      ```
+
+      ```bash armeabi-v7a
+      cmake \
+        -S client/Android/Studio/freeRDPCore/src/main/cpp \
+        -B build/android-arm32 \
+        --toolchain $ANDROID_NDK/build/cmake/android.toolchain.cmake \
+        -DANDROID_ABI=armeabi-v7a \
+        -DANDROID_PLATFORM=android-23 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -GNinja
+      ```
+
+      ```bash x86_64
+      cmake \
+        -S client/Android/Studio/freeRDPCore/src/main/cpp \
+        -B build/android-x86_64 \
+        --toolchain $ANDROID_NDK/build/cmake/android.toolchain.cmake \
+        -DANDROID_ABI=x86_64 \
+        -DANDROID_PLATFORM=android-23 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -GNinja
+      ```
+
+      ```bash x86
+      cmake \
+        -S client/Android/Studio/freeRDPCore/src/main/cpp \
+        -B build/android-x86 \
+        --toolchain $ANDROID_NDK/build/cmake/android.toolchain.cmake \
+        -DANDROID_ABI=x86 \
+        -DANDROID_PLATFORM=android-23 \
+        -DCMAKE_BUILD_TYPE=Release \
+        -GNinja
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Build">
+    ```bash
+    cmake --build build/android-arm64
+    ```
+
+    Replace the build directory with whichever ABI you configured above.
+  </Step>
+</Steps>
+
+## Android-Specific CMake Flags
+
+| Feature | Flag | Default |
+|---------|------|---------|
+| OpenSL ES audio | `-DWITH_OPENSLES=ON/OFF` | ON |
+| MediaCodec H264 (experimental) | `-DWITH_MEDIACODEC=ON/OFF` | OFF |
+| Target SDK version | `-DANDROID_APP_TARGET_SDK=<n>` | 21 |
+| Minimum SDK version | `-DANDROID_APP_MIN_SDK=<n>` | 14 |
+
+<Warning>
+  `-DWITH_MEDIACODEC=ON` is experimental and currently has no fallback if the device hardware does not support the requested codec. Use with caution in production builds.
+</Warning>
+
+## Updating the JNI Bindings
+
+When the FreeRDP C API changes or you need to expose additional functionality to the Java layer, you must update both sides of the JNI bridge:
+
+1. **C side** — edit `client/Android/android_freerdp.c` and add the new function to the `methods` struct.
+2. **Java side** — edit `client/Android/Studio/freeRDPCore/src/main/java/com/freerdp/freerdpcore/services/LibFreeRDP.java` to declare the corresponding `native` method.
+
+Both files must be kept in sync; a mismatch will cause a `java.lang.UnsatisfiedLinkError` at runtime.

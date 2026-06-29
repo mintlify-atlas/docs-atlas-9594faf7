@@ -1,72 +1,85 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "FreeRDP",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#040404",
+    "light": "#66a5b8",
+    "dark": "#184863"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
+  "favicon": "https://media.brand.dev/c08d4185-22c4-4f8e-b4b1-5feca548b7ce.png",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "https://media.brand.dev/b482d83d-a1da-4447-a4e2-bac98b94c5db.png",
+    "dark": "https://media.brand.dev/b482d83d-a1da-4447-a4e2-bac98b94c5db.png"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/FreeRDP/FreeRDP"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/FreeRDP/FreeRDP"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "building/overview",
+              "building/linux",
+              "building/windows",
+              "building/macos",
+              "building/android",
+              "building/ios"
+            ]
+          },
+          {
+            "group": "Client Usage",
+            "pages": [
+              "clients/overview",
+              "clients/xfreerdp",
+              "clients/sdl",
+              "clients/wayland",
+              "clients/command-line"
+            ]
+          },
+          {
+            "group": "Server Components",
+            "pages": [
+              "server/overview",
+              "server/shadow",
+              "server/proxy",
+              "server/sample"
+            ]
+          },
+          {
+            "group": "Library Integration",
+            "pages": [
+              "library/core-api",
+              "library/settings",
+              "library/channels",
+              "library/winpr",
+              "library/logging"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/channels-list",
+              "reference/cmake-options",
+              "reference/security",
+              "reference/faq"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

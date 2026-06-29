@@ -1,0 +1,292 @@
+---
+title: "FreeRDP Shadow Server: Desktop Capture and Streaming"
+sidebarTitle: "Shadow Server"
+description: "Learn how the FreeRDP shadow server captures the local desktop and streams it over RDP, including platform backends, CLI usage, and multi-client support."
+---
+
+The FreeRDP shadow server captures the local desktop using a platform-specific backend and streams the content to one or more connected RDP clients in real time. Unlike a traditional RDP server that hosts isolated sessions, the shadow server exposes the currently running desktop — making it suitable for screen sharing, remote assistance, and unattended remote access scenarios. Clients can optionally be permitted to interact with the session (keyboard and mouse input are forwarded to the running desktop) or restricted to view-only mode.
+
+## Architecture
+
+The shadow server is structured around three layers: a platform-independent core that manages client connections, encoding, and channel negotiation; a **subsystem** abstraction (`rdpShadowSubsystem`) that encapsulates the platform capture backend; and a set of per-client structures (`rdpShadowClient`) that track state for each connected viewer.
+
+```c
+/* include/freerdp/server/shadow.h */
+
+struct rdp_shadow_server
+{
+    wArrayList*           clients;        /* list of rdpShadowClient* */
+    rdpShadowSubsystem*   subsystem;      /* platform capture backend */
+    rdpShadowScreen*      screen;
+    rdpShadowSurface*     surface;        /* current framebuffer */
+    rdpShadowCapture*     capture;
+    freerdp_listener*     listener;
+
+    DWORD  port;
+    BOOL   mayView;       /* allow clients to view the desktop */
+    BOOL   mayInteract;   /* allow clients to send input */
+    BOOL   authentication;
+    UINT32 selectedMonitor;
+
+    /* Codec settings */
+    H264_RATECONTROL_MODE h264RateControlMode;
+    UINT32 h264BitRate;
+    UINT32 h264FrameRate;
+    UINT32 h264QP;
+
+    size_t maxClientsConnected;
+    char*  CertificateFile;
+    char*  PrivateKeyFile;
+};
+
+struct rdp_shadow_client
+{
+    rdpContext          context;
+    HANDLE              thread;
+    BOOL                activated;
+    BOOL                mayView;
+    BOOL                mayInteract;
+
+    /* Virtual channel server contexts */
+    EncomspServerContext*  encomsp;   /* multiparty */
+    RemdeskServerContext*  remdesk;   /* remote assistance */
+    RdpsndServerContext*   rdpsnd;    /* audio output */
+    audin_server_context*  audin;     /* audio input */
+    RdpgfxServerContext*   rdpgfx;    /* GFX pipeline */
+
+    rdpShadowServer*    server;
+    rdpShadowEncoder*   encoder;
+};
+```
+
+### Subsystem abstraction
+
+Every platform backend implements `RDP_SHADOW_ENTRY_POINTS` — a set of function pointers registered at startup:
+
+```c
+struct S_RDP_SHADOW_ENTRY_POINTS
+{
+    pfnShadowSubsystemNew   New;
+    pfnShadowSubsystemFree  Free;
+    pfnShadowSubsystemInit  Init;
+    pfnShadowSubsystemUninit Uninit;
+    pfnShadowSubsystemStart Start;
+    pfnShadowSubsystemStop  Stop;
+    pfnShadowEnumMonitors   EnumMonitors;
+};
+```
+
+The subsystem also receives input events forwarded from connected clients:
+
+```c
+struct rdp_shadow_subsystem
+{
+    RDP_SHADOW_ENTRY_POINTS ep;
+
+    UINT32  numMonitors;
+    UINT32  captureFrameRate;
+    MONITOR_DEF monitors[16];
+    MONITOR_DEF virtualScreen;
+
+    rdpShadowMultiClientEvent* updateEvent; /* signals frame availability */
+
+    /* Input callbacks invoked for each connected client */
+    pfnShadowKeyboardEvent        KeyboardEvent;
+    pfnShadowUnicodeKeyboardEvent UnicodeKeyboardEvent;
+    pfnShadowMouseEvent           MouseEvent;
+    pfnShadowRelMouseEvent        RelMouseEvent;
+    pfnShadowExtendedMouseEvent   ExtendedMouseEvent;
+    pfnShadowSynchronizeEvent     SynchronizeEvent;
+
+    /* Authentication hook */
+    pfnShadowAuthenticate         Authenticate;
+    pfnShadowClientConnect        ClientConnect;
+    pfnShadowClientDisconnect     ClientDisconnect;
+};
+```
+
+## Platform Capture Backends
+
+The built-in subsystem selection is done at compile time based on the target OS. You can override it at runtime using `shadow_subsystem_set_entry_builtin(name)`.
+
+| Platform | Subsystem name | Source directory | Notes |
+|---|---|---|---|
+| Linux / X11 | `"X11"` | `server/shadow/X11/` | Uses XDamage, XFixes, and XShm for efficient dirty-region tracking |
+| macOS / Quartz | `"Mac"` | `server/shadow/Mac/` | Uses `CGWindowListCreateImageFromArray` and screen recording permission |
+| Windows / DXGI | `"Win"` | `server/shadow/Win/` | Uses DXGI Desktop Duplication API for zero-copy capture |
+
+<Note>
+On macOS 10.15 and later, the process must be granted *Screen Recording* permission in System Settings → Privacy & Security before the Quartz subsystem can capture any content.
+</Note>
+
+## Building the Shadow Server
+
+Enable the `WITH_SHADOW` CMake option. On Linux the X11 development headers must be installed first:
+
+<Tabs>
+  <Tab title="Linux (X11)">
+    ```bash
+    # Ubuntu / Debian
+    sudo apt install libx11-dev libxext-dev libxfixes-dev libxdamage-dev
+
+    cmake -B build -S . \
+      -DWITH_SHADOW=ON \
+      -DCMAKE_BUILD_TYPE=Release
+    cmake --build build --target freerdp-shadow-cli
+    ```
+  </Tab>
+  <Tab title="macOS">
+    ```bash
+    cmake -B build -S . \
+      -DWITH_SHADOW=ON \
+      -DCMAKE_BUILD_TYPE=Release
+    cmake --build build --target freerdp-shadow-cli
+    ```
+  </Tab>
+  <Tab title="Windows">
+    ```bash
+    cmake -B build -S . -G "Visual Studio 17 2022" -A x64 ^
+      -DWITH_SHADOW=ON
+    cmake --build build --config Release --target freerdp-shadow-cli
+    ```
+  </Tab>
+</Tabs>
+
+## Running the Shadow Server CLI
+
+The `freerdp-shadow-cli` binary is the ready-to-use command-line front-end. It wraps the shadow server library and exposes all server options as command-line flags.
+
+<Steps>
+  <Step title="Generate a self-signed certificate">
+    NLA authentication (the default) requires a TLS certificate. The shadow server can auto-generate one, or you can supply your own:
+
+    ```bash
+    # Let the shadow server auto-generate in ~/.config/freerdp/server/ (default)
+    freerdp-shadow-cli /port:3389 /auth:true
+    ```
+  </Step>
+  <Step title="Start the server">
+    ```bash
+    # Listen on all interfaces, require authentication, allow interaction
+    freerdp-shadow-cli /port:3389 /auth:true +may-view +may-interact
+
+    # Bind to a specific address only
+    freerdp-shadow-cli /port:3389 /bind-address:192.168.1.10 /auth:true
+
+    # Share only monitor index 1
+    freerdp-shadow-cli /port:3389 /monitors:1
+
+    # Share a sub-rectangle of the desktop (x,y,width,height)
+    freerdp-shadow-cli /port:3389 /rect:0,0,1280,800
+
+    # Limit concurrent connections
+    freerdp-shadow-cli /port:3389 /max-connections:5
+
+    # Disable NLA (TLS only — useful for testing)
+    freerdp-shadow-cli /port:3389 -sec-nla
+    ```
+  </Step>
+  <Step title="Connect from an RDP client">
+    Use any standard RDP client. With FreeRDP's client:
+
+    ```bash
+    xfreerdp /v:localhost:3389 /u:youruser
+    ```
+  </Step>
+</Steps>
+
+### Full CLI reference
+
+| Option | Description |
+|---|---|
+| `/port:<n>` | TCP port to listen on (default: 3389) |
+| `/bind-address:<addr>` | Comma-separated list of bind addresses |
+| `/ipc-socket:<path>` | Unix domain socket instead of TCP |
+| `/auth:true\|false` | Require client authentication (default: true) |
+| `+may-view` / `-may-view` | Allow / deny clients from viewing the desktop |
+| `+may-interact` / `-may-interact` | Allow / deny keyboard and mouse input |
+| `/monitors:[<idx>]` | Select monitor index to share, or list monitors |
+| `/rect:<x,y,w,h>` | Share a sub-rectangle of the selected monitor |
+| `/max-connections:<n>` | Maximum simultaneous clients (0 = unlimited) |
+| `+server-side-cursor` | Hide the mouse pointer from RDP clients |
+| `+mouse-relative` | Enable relative mouse event support |
+| `/sam-file:<path>` | Path to SAM credential database for NLA |
+| `-sec-nla` | Disable NLA security (TLS or RDP security only) |
+| `/log-level:<LEVEL>` | Log verbosity: OFF, FATAL, ERROR, WARN, INFO, DEBUG, TRACE |
+| `/log-filters:<tag>:<level>` | Per-tag log filter (see wLog) |
+
+## Multi-Client Support
+
+The shadow server natively supports multiple simultaneous viewers. All connected clients share the same framebuffer (`rdpShadowSurface`) and receive the same screen updates. Input events from any client with `mayInteract=TRUE` are forwarded to the platform subsystem.
+
+The `rdpShadowMultiClientEvent` synchronization primitive (`shadow_mcevent.h`) coordinates frame delivery: the capture subsystem signals the event when new screen content is available, and each client thread awakens and encodes/sends its own update stream independently.
+
+```c
+/* Broadcasting a message to all connected clients */
+int shadow_client_boardcast_msg(rdpShadowServer* server,
+                                void* context,
+                                UINT32 type,
+                                SHADOW_MSG_OUT* msg,
+                                void* lParam);
+
+/* Posting to a single client */
+BOOL shadow_client_post_msg(rdpShadowClient* client,
+                            void* context,
+                            UINT32 type,
+                            SHADOW_MSG_OUT* msg,
+                            void* lParam);
+```
+
+<Note>
+Per-client permissions (`mayView`, `mayInteract`) are set on the `rdpShadowClient` and evaluated independently of the server-wide defaults. This allows a lobby-style flow where the subsystem's `Authenticate` callback can grant or deny each connecting user individually.
+</Note>
+
+## Supported Channels
+
+The shadow server negotiates and activates the following virtual channels for each connected client:
+
+| Channel | Context type | Purpose |
+|---|---|---|
+| **rdpgfx** | `RdpgfxServerContext*` | Graphics Pipeline Extension (H.264/AVC, AV1, progressive codec) |
+| **rdpsnd** | `RdpsndServerContext*` | Audio output (desktop audio playback at the client) |
+| **audin** | `audin_server_context*` | Audio input (microphone capture from the client) |
+| **encomsp** | `EncomspServerContext*` | Multiparty / MS-ENCOMSP (conference and annotation) |
+| **remdesk** | `RemdeskServerContext*` | Remote Assistance (MS-RDPERA) |
+
+## Embedding the Shadow Library
+
+You can embed the shadow server in your own application rather than using the CLI:
+
+```c
+#include <freerdp/server/shadow.h>
+
+rdpShadowServer* server = shadow_server_new();
+
+/* Configure before init */
+server->port        = 3389;
+server->mayView     = TRUE;
+server->mayInteract = TRUE;
+server->authentication = TRUE;
+
+if (shadow_server_init(server) < 0)
+    goto fail;
+
+if (shadow_server_start(server) < 0)
+    goto fail;
+
+/* ... run your event loop ... */
+
+shadow_server_stop(server);
+shadow_server_uninit(server);
+shadow_server_free(server);
+```
+
+To register a custom platform subsystem at runtime:
+
+```c
+/* Use a built-in backend by name */
+shadow_subsystem_set_entry_builtin("X11");
+
+/* Or supply your own entry point */
+shadow_subsystem_set_entry(my_subsystem_entry);
+```

@@ -1,0 +1,377 @@
+---
+title: "FreeRDP Sample Server: Custom RDP Server Reference"
+sidebarTitle: "Sample Server"
+description: "Use the FreeRDP sample server as a minimal reference for the rdpPeer lifecycle, callback registration, and virtual channel initialization in a custom RDP server."
+---
+
+The FreeRDP sample server (`server/Sample/`) is a fully compilable, minimal RDP server whose sole purpose is to illustrate every step of the `rdpPeer` lifecycle. It renders a solid-colour background, bounces a test icon around the desktop, and exercises audio, input, and multiparty channels — not because any of that is practically useful, but because it gives you a single, self-contained file to read and adapt when starting a new custom RDP server implementation.
+
+<Note>
+The sample server is a reference skeleton, not a production-ready application. It hard-codes defaults (1024×768, fixed codec preferences, no access control) and is designed to be modified rather than deployed as-is.
+</Note>
+
+## Source Files
+
+| File | Purpose |
+|---|---|
+| `sfreerdp.c` | Main peer lifecycle: context allocation, callback registration, peer thread, input handlers, main loop |
+| `sfreerdp.h` | `testPeerContext` struct definition |
+| `sf_audin.c` / `sf_audin.h` | Audio input (microphone capture from the client) channel initialization |
+| `sf_ainput.c` / `sf_ainput.h` | Advanced input channel (pointer precision, touch) initialization |
+| `sf_rdpsnd.c` / `sf_rdpsnd.h` | Audio output (server-to-client audio playback) channel initialization |
+| `sf_encomsp.c` / `sf_encomsp.h` | MS-ENCOMSP multiparty / Lync conference channel |
+
+## The `testPeerContext` Structure
+
+Every connected peer has a `testPeerContext` that embeds the mandatory `rdpContext` as its first member. This layout trick allows the pointer to be safely cast between `rdpContext*` and `testPeerContext*`.
+
+```c
+/* server/Sample/sfreerdp.h */
+struct test_peer_context
+{
+    rdpContext _p;             /* MUST be first — enables safe casting */
+
+    RFX_CONTEXT*       rfx_context;   /* RemoteFX encoder */
+    NSC_CONTEXT*       nsc_context;   /* NSCodec encoder */
+    wStream*           s;             /* reusable PDU stream buffer */
+    BYTE*              bg_data;       /* background framebuffer */
+    UINT32             icon_x;
+    UINT32             icon_y;
+    BOOL               activated;     /* set TRUE in PostConnect */
+    HANDLE             event;
+    HANDLE             stopEvent;
+    HANDLE             vcm;           /* Virtual Channel Manager */
+    void*              debug_channel;
+    HANDLE             debug_channel_thread;
+
+#if defined(CHANNEL_AUDIN_SERVER)
+    audin_server_context* audin;
+    BOOL               audin_open;
+#endif
+#if defined(CHANNEL_AINPUT_SERVER)
+    ainput_server_context* ainput;
+    BOOL               ainput_open;
+#endif
+
+    UINT32             frame_id;
+    RdpsndServerContext* rdpsnd;
+    EncomspServerContext* encomsp;
+    rdpTransportIo     io;
+    wImage*            image;
+};
+typedef struct test_peer_context testPeerContext;
+```
+
+## rdpPeer Lifecycle
+
+The lifecycle from accepted socket to running session follows a fixed sequence. Understanding this sequence is the most important thing to take away from the sample server.
+
+<Steps>
+  <Step title="Listener accepts a connection">
+    The `freerdp_listener` fires its `PeerAccepted` callback with a freshly created `freerdp_peer*`. The callback is responsible for configuring the peer and launching a service thread.
+
+    ```c
+    static BOOL test_peer_accepted(freerdp_listener* instance,
+                                   freerdp_peer*     client)
+    {
+        /* Configure per-peer context dimensions */
+        client->ContextSize = sizeof(testPeerContext);
+        client->ContextNew  = test_peer_context_new;
+        client->ContextFree = test_peer_context_free;
+
+        if (!freerdp_peer_context_new(client))
+            return FALSE;
+
+        /* Register protocol lifecycle callbacks */
+        client->Capabilities = tf_peer_capabilities;
+        client->PostConnect   = tf_peer_post_connect;
+        client->Activate      = tf_peer_activate;
+
+        /* Launch per-peer thread */
+        HANDLE thread = CreateThread(NULL, 0,
+                                     test_peer_run, client, 0, NULL);
+        return thread != NULL;
+    }
+    ```
+  </Step>
+  <Step title="Context allocation — ContextNew / ContextFree">
+    `freerdp_peer_context_new()` calls `ContextNew` immediately. This is where you initialize all per-session resources. `ContextFree` is called when the session ends, whether cleanly or by error.
+
+    ```c
+    static BOOL test_peer_context_new(freerdp_peer* client,
+                                      rdpContext*   ctx)
+    {
+        testPeerContext* context = (testPeerContext*)ctx;
+
+        context->image = winpr_image_new();
+        if (!context->image) goto fail;
+
+        context->rfx_context = rfx_context_new_ex(
+            TRUE,
+            freerdp_settings_get_uint32(ctx->settings,
+                                        FreeRDP_ThreadingFlags));
+        if (!context->rfx_context) goto fail;
+
+        rfx_context_reset(context->rfx_context,
+                          SAMPLE_SERVER_DEFAULT_WIDTH,
+                          SAMPLE_SERVER_DEFAULT_HEIGHT);
+
+        context->nsc_context = nsc_context_new();
+        if (!context->nsc_context) goto fail;
+
+        context->s   = Stream_New(NULL, 65536);
+        context->vcm = WTSOpenServerA((LPSTR)client->context);
+
+        return TRUE;
+    fail:
+        test_peer_context_free(client, ctx);
+        return FALSE;
+    }
+
+    static void test_peer_context_free(freerdp_peer* client,
+                                       rdpContext*   ctx)
+    {
+        testPeerContext* context = (testPeerContext*)ctx;
+        if (!context) return;
+
+        winpr_image_free(context->image, TRUE);
+        Stream_Free(context->s, TRUE);
+        free(context->bg_data);
+        rfx_context_free(context->rfx_context);
+        nsc_context_free(context->nsc_context);
+        rdpsnd_server_context_free(context->rdpsnd);
+        encomsp_server_context_free(context->encomsp);
+        WTSCloseServer(context->vcm);
+    }
+    ```
+  </Step>
+  <Step title="Capability negotiation — Capabilities callback">
+    `Capabilities` fires after the client sends its Confirm Active PDU. The server can inspect `client->context->settings` to learn what the client supports (codecs, channels, resolutions) and adjust its behaviour accordingly.
+
+    ```c
+    static BOOL tf_peer_capabilities(freerdp_peer* client)
+    {
+        /* Inspect negotiated settings; return FALSE to reject */
+        return TRUE;
+    }
+    ```
+  </Step>
+  <Step title="Connection complete — PostConnect callback">
+    `PostConnect` fires after the Font List / Font Map exchange completes the basic RDP handshake. This is the correct place to open virtual channels and begin sending graphics updates.
+
+    ```c
+    static BOOL tf_peer_post_connect(freerdp_peer* client)
+    {
+        testPeerContext* context = (testPeerContext*)client->context;
+        rdpSettings*     settings = client->context->settings;
+
+        /* Resize encoder to match what the client requested */
+        rfx_context_reset(context->rfx_context,
+            freerdp_settings_get_uint32(settings, FreeRDP_DesktopWidth),
+            freerdp_settings_get_uint32(settings, FreeRDP_DesktopHeight));
+
+        /* Open static virtual channels the client joined */
+        if (WTSVirtualChannelManagerIsChannelJoined(context->vcm,
+                                                     RDPSND_CHANNEL_NAME))
+            sf_peer_rdpsnd_init(context);
+
+        if (WTSVirtualChannelManagerIsChannelJoined(context->vcm,
+                                                     ENCOMSP_SVC_CHANNEL_NAME))
+            sf_peer_encomsp_init(context);
+
+        /* Dynamic virtual channels (always attempt) */
+        sf_peer_audin_init(context);
+
+        return TRUE;
+    }
+    ```
+  </Step>
+  <Step title="Session activated — Activate callback">
+    `Activate` fires when the client sends its Synchronize PDU, meaning it is ready to receive graphics. The sample server sets `context->activated = TRUE` and sends the first frame here.
+
+    ```c
+    static BOOL tf_peer_activate(freerdp_peer* client)
+    {
+        testPeerContext* context = (testPeerContext*)client->context;
+        context->activated = TRUE;
+
+        /* Send initial background frame */
+        const RFX_RECT rect = { .x = 0, .y = 0,
+            .width  = (UINT16)freerdp_settings_get_uint32(
+                          client->context->settings, FreeRDP_DesktopWidth),
+            .height = (UINT16)freerdp_settings_get_uint32(
+                          client->context->settings, FreeRDP_DesktopHeight) };
+
+        test_peer_begin_frame(client);
+        test_peer_draw_background(client, &rect);
+        test_peer_end_frame(client);
+        return TRUE;
+    }
+    ```
+  </Step>
+  <Step title="Input callback registration">
+    Input callbacks are registered on `client->context->input` after `freerdp_peer_context_new()`:
+
+    ```c
+    client->context->input->SynchronizeEvent =
+        tf_peer_synchronize_event;
+    client->context->input->KeyboardEvent    =
+        tf_peer_keyboard_event;
+    client->context->input->UnicodeKeyboardEvent =
+        tf_peer_unicode_keyboard_event;
+    client->context->input->MouseEvent       =
+        tf_peer_mouse_event;
+    client->context->input->ExtendedMouseEvent =
+        tf_peer_extended_mouse_event;
+    ```
+  </Step>
+  <Step title="Peer main loop">
+    The peer thread runs a wait/dispatch loop. `CheckFileDescriptor` drives the RDP state machine; it reads incoming PDUs, fires the registered callbacks, and sends any queued output.
+
+    ```c
+    static DWORD WINAPI test_peer_run(LPVOID arg)
+    {
+        freerdp_peer* client = (freerdp_peer*)arg;
+        testPeerContext* ctx = (testPeerContext*)client->context;
+
+        if (!client->Initialize(client))
+            goto disconnect;
+
+        while (TRUE)
+        {
+            DWORD nCount = 0;
+            HANDLE handles[MAXIMUM_WAIT_OBJECTS];
+
+            nCount = client->GetEventHandles(client, handles, 64);
+            /* add application-level handles (timer, vcm, ...) */
+            handles[nCount++] = WTSVirtualChannelManagerGetEventHandle(ctx->vcm);
+
+            DWORD status = WaitForMultipleObjects(nCount, handles,
+                                                  FALSE, INFINITE);
+            if (status == WAIT_FAILED)
+                break;
+
+            if (!client->CheckFileDescriptor(client))
+                break;
+
+            if (WTSVirtualChannelManagerCheckFileDescriptor(ctx->vcm)
+                != TRUE)
+                break;
+        }
+
+    disconnect:
+        client->Disconnect(client);
+        freerdp_peer_context_free(client);
+        freerdp_peer_free(client);
+        return 0;
+    }
+    ```
+  </Step>
+</Steps>
+
+## Channel Initialization Pattern
+
+Each channel module follows the same three-step pattern: create a server context, register callbacks, and open/start the channel. The sample's `sf_rdpsnd.c` is the most straightforward example:
+
+```c
+/* server/Sample/sf_rdpsnd.c pattern */
+BOOL sf_peer_rdpsnd_init(testPeerContext* context)
+{
+    context->rdpsnd = rdpsnd_server_context_new(context->vcm);
+    if (!context->rdpsnd)
+        return FALSE;
+
+    context->rdpsnd->data = context;
+    /* register callbacks: rdpsnd->ReceiveSamples, etc. */
+
+    if (context->rdpsnd->Start(context->rdpsnd) != CHANNEL_RC_OK)
+    {
+        rdpsnd_server_context_free(context->rdpsnd);
+        context->rdpsnd = NULL;
+        return FALSE;
+    }
+    return TRUE;
+}
+```
+
+The pattern is identical for `audin`, `ainput`, and `encomsp` — create a context from the VCM handle, set callbacks, call `Start`.
+
+## Sending Graphics Updates
+
+All graphics output goes through the `rdpUpdate` interface on `client->context->update`. The sample wraps outbound frames with surface frame markers:
+
+```c
+static void test_peer_begin_frame(freerdp_peer* client)
+{
+    SURFACE_FRAME_MARKER fm = { .frameAction = SURFACECMD_FRAMEACTION_BEGIN,
+                                 .frameId    = context->frame_id };
+    client->context->update->SurfaceFrameMarker(
+        client->context->update->context, &fm);
+}
+
+static void test_peer_end_frame(freerdp_peer* client)
+{
+    SURFACE_FRAME_MARKER fm = { .frameAction = SURFACECMD_FRAMEACTION_END,
+                                 .frameId    = context->frame_id };
+    client->context->update->SurfaceFrameMarker(
+        client->context->update->context, &fm);
+    context->frame_id++;
+}
+```
+
+Actual pixel data is sent with `SurfaceBits` after compressing the framebuffer with RFX (`rfx_compose_message`) or NSC (`nsc_compose_message`):
+
+```c
+SURFACE_BITS_COMMAND cmd = { 0 };
+cmd.cmdType   = CMDTYPE_STREAM_SURFACE_BITS;
+cmd.destLeft  = rect->x;
+cmd.destTop   = rect->y;
+cmd.destRight = rect->x + rect->width;
+cmd.destBottom = rect->y + rect->height;
+cmd.bmp.codecID = (UINT16)freerdp_settings_get_uint32(
+    settings, FreeRDP_RemoteFxCodecId);
+cmd.bmp.bpp    = 32;
+cmd.bmp.width  = rect->width;
+cmd.bmp.height = rect->height;
+cmd.bmp.bitmapData       = Stream_Buffer(s);
+cmd.bmp.bitmapDataLength = (UINT32)Stream_GetPosition(s);
+
+update->SurfaceBits(update->context, &cmd);
+```
+
+## Building the Sample Server
+
+```bash
+cmake -B build -S . \
+  -DWITH_SAMPLE=ON \
+  -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --target sfreerdp-server
+```
+
+Run it (it will auto-generate a certificate the first time):
+
+```bash
+./build/server/Sample/sfreerdp-server \
+  --cert auto \
+  --port 3389
+```
+
+Then connect with any RDP client:
+
+```bash
+xfreerdp /v:localhost:3389 /u:testuser
+```
+
+## Using the Sample as a Template
+
+When adapting the sample for a real application:
+
+1. **Rename `testPeerContext`** to your own struct name and add your application fields after `rdpContext _p`.
+2. **Replace `test_peer_draw_background`** with your own rendering or application window capture logic.
+3. **Remove channels you don't need** — delete the `sf_audin_init`, `sf_rdpsnd_init`, or `sf_encomsp_init` calls from `tf_peer_post_connect`.
+4. **Add authentication** — implement a `Logon` callback on `freerdp_peer` and validate credentials before returning `TRUE`.
+5. **Move codec selection out of `Activate`** — in a production server you will want to negotiate codec caps in `Capabilities` and only proceed if the client supports your required codec set.
+
+<Warning>
+The sample server does not implement user authentication. Any client that connects is immediately granted access. Add a `Logon` or NLA verification step before shipping anything derived from this code.
+</Warning>

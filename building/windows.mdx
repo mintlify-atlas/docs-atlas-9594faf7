@@ -1,0 +1,191 @@
+---
+title: "Building FreeRDP on Windows: MSVC and MinGW Builds"
+sidebarTitle: "Windows"
+description: "Build FreeRDP on Windows with Visual Studio MSVC or cross-compile from Linux using the llvm-mingw Docker setup found in docs/mingw-example."
+---
+
+FreeRDP supports two distinct build paths on Windows: a native build using the Microsoft Visual C++ toolchain (MSVC) invoked from a Visual Studio Developer Command Prompt, and a cross-compile path using **llvm-mingw** from a Linux host. The native MSVC build is the most straightforward path for Windows developers. The MinGW cross-compile path is useful for CI pipelines and for producing standalone Windows binaries from a Linux environment; a self-contained Docker-based example lives in `docs/mingw-example/` inside the repository.
+
+## Native Build with Visual Studio (MSVC)
+
+The native build follows the same CMake configure-build-install pattern used on all platforms. The only difference is that the configure step must be run from a **Visual Studio Developer Command Prompt** (or a `cmd.exe` session that has already executed `vcvarsall.bat`) so that CMake can locate `cl.exe`, the linker, and the Windows SDK headers.
+
+<Steps>
+  <Step title="Open a Visual Studio Developer Command Prompt">
+    Launch **Developer Command Prompt for VS 2022** (or the equivalent for your Visual Studio version) from the Start menu. Alternatively, run `vcvarsall.bat` from a regular `cmd.exe`:
+
+    ```bat
+    "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
+    ```
+  </Step>
+
+  <Step title="Configure with CMake">
+    Adjust paths to match your source checkout and desired install location:
+
+    ```bat
+    cmake -GNinja ^
+      -DCMAKE_BUILD_TYPE=Release ^
+      -DWITH_VERBOSE_WINPR_ASSERT=OFF ^
+      -DCMAKE_PREFIX_PATH=C:\freerdp\install ^
+      -B C:\freerdp\build ^
+      -S C:\freerdp\src
+    ```
+
+    <Note>
+      On Windows, the `WITH_X11` and `WITH_WAYLAND` flags are not applicable and are ignored. Windows-specific options include `-DWITH_MEDIA_FOUNDATION=ON` (H264 via Media Foundation, not available on UWP) and `-DWITH_WINMM=ON` (Windows Multimedia audio, enabled by default).
+    </Note>
+  </Step>
+
+  <Step title="Build and install">
+    ```bat
+    cmake --build C:\freerdp\build --target install
+    ```
+  </Step>
+</Steps>
+
+### Windows-Specific CMake Flags
+
+| Feature | Flag | Default |
+|---------|------|---------|
+| Media Foundation H264 | `-DWITH_MEDIA_FOUNDATION=ON/OFF` | OFF |
+| Windows Multimedia audio | `-DWITH_WINMM=ON/OFF` | ON |
+| Windows 8 libraries | `-DWITH_WIN8=ON/OFF` | OFF |
+| Console window | `-DWITH_WIN_CONSOLE=ON/OFF` | ON |
+| Smartcard emulation | `-DWITH_SMARTCARD_EMULATE=ON/OFF` | ON |
+| SDL client | `-DWITH_CLIENT_SDL=ON/OFF` | ON |
+
+## Cross-Compile with llvm-mingw (Docker)
+
+The repository ships a complete, self-contained MinGW cross-compile example under `docs/mingw-example/`. It uses a multi-stage Docker build to compile **llvm-mingw** dependencies (zlib, OpenSSL, OpenH264, libusb, FAAC, FAAD2, OpenCL) and then FreeRDP itself, all targeting Windows from a Linux host.
+
+<Warning>
+  MinGW builds are not actively maintained as of FreeRDP 3.x. The build process may break between releases. Pull requests to maintain MinGW support are always welcome.
+</Warning>
+
+### Repository structure
+
+```
+docs/mingw-example/
+├── Dockerfile              # Multi-stage Docker image
+├── docker-compose.yml      # Extracts built binaries to ./build/
+├── _build.sh               # Shared build helper
+├── build_x64.sh            # Build for x86_64
+├── build_arm64.sh          # Build for aarch64
+├── build_ia32.sh           # Build for i686
+└── toolchain/
+    └── cmake/
+        ├── x86_64-w64-mingw32-toolchain.cmake
+        ├── aarch64-w64-mingw32-toolchain.cmake
+        └── i686-w64-mingw32-toolchain.cmake
+```
+
+### Building with Docker
+
+Each architecture has a wrapper script. All three delegate to `_build.sh`, which calls `docker build` followed by `docker compose up` to extract binaries.
+
+<CodeGroup>
+  ```bash x86_64
+  cd docs/mingw-example
+  ./build_x64.sh
+  ```
+
+  ```bash aarch64
+  cd docs/mingw-example
+  ./build_arm64.sh
+  ```
+
+  ```bash i686
+  cd docs/mingw-example
+  ./build_ia32.sh
+  ```
+</CodeGroup>
+
+Binaries are placed in `docs/mingw-example/build/<arch>/` by the `dist-builder` Docker Compose service.
+
+### How the Docker build works
+
+The `Dockerfile` downloads **llvm-mingw** (MSVCRT variant), installs it system-wide, and then builds each dependency in a separate stage:
+
+```dockerfile
+# Download and install llvm-mingw
+RUN wget https://github.com/mstorsjo/llvm-mingw/releases/download/20230320/llvm-mingw-20230320-msvcrt-ubuntu-18.04-x86_64.tar.xz \
+      -O llvm.tar.xz && \
+    tar -xf llvm.tar.xz && \
+    cp -a /tmp/llvm-mingw-20230320-msvcrt-ubuntu-18.04-x86_64/* /usr/
+```
+
+The FreeRDP stage then links against all pre-built dependencies using explicit CMake paths:
+
+```bash
+cmake .. \
+  -DCMAKE_TOOLCHAIN_FILE=$TOOLCHAIN_CMAKE \
+  -G Ninja \
+  -DCMAKE_INSTALL_PREFIX=/build \
+  -DWITH_X11=OFF \
+  -DWITH_MEDIA_FOUNDATION=OFF \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DUSE_UNWIND=OFF \
+  -DWITH_ZLIB=ON  -DZLIB_INCLUDE_DIR=/build \
+  -DWITH_OPENH264=ON \
+    -DOPENH264_INCLUDE_DIR=/build/include \
+    -DOPENH264_LIBRARY=/build/lib/libopenh264.dll.a \
+  -DOPENSSL_INCLUDE_DIR=/build/include \
+  -DWITH_OPENCL=ON \
+    -DOpenCL_INCLUDE_DIR=/build/include \
+    -DOpenCL_LIBRARIES=/build/lib/OpenCL.a \
+  -DLIBUSB_1_INCLUDE_DIRS=/build/include/libusb-1.0 \
+    -DLIBUSB_1_LIBRARIES=/build/lib/libusb-1.0.a \
+  -DWITH_WINPR_TOOLS=OFF \
+  -DWITH_WIN_CONSOLE=ON \
+  -DWITH_PROGRESS_BAR=OFF \
+  -DWITH_FAAD2=ON \
+    -DFAAD2_INCLUDE_DIR=/build/include \
+    -DFAAD2_LIBRARY=/build/lib/libfaad.a \
+  -DWITH_FAAC=ON \
+    -DFAAC_INCLUDE_DIR=/build/include \
+    -DFAAC_LIBRARY=/build/lib/libfaac.a
+```
+
+### CMake toolchain file (x86_64 example)
+
+The toolchain files in `docs/mingw-example/toolchain/cmake/` point CMake at the correct cross-compiler and sysroot:
+
+```cmake
+set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc)
+set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++)
+set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32)
+
+execute_process(COMMAND which x86_64-w64-mingw32-windres
+  OUTPUT_VARIABLE TOOLCHAIN_RC_COMPILER)
+execute_process(COMMAND which x86_64-w64-mingw32-dlltool
+  OUTPUT_VARIABLE TOOLCHAIN_DLLTOOL)
+
+string(STRIP ${TOOLCHAIN_RC_COMPILER} TOOLCHAIN_RC_COMPILER)
+set(CMAKE_RC_COMPILER ${TOOLCHAIN_RC_COMPILER})
+
+string(STRIP ${TOOLCHAIN_DLLTOOL} TOOLCHAIN_DLLTOOL)
+set(DLLTOOL ${TOOLCHAIN_DLLTOOL})
+
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+set(CMAKE_SYSTEM_NAME Windows)
+```
+
+### Automated CI reference
+
+The MinGW build is exercised in the official CI via the workflow at `.github/workflows/mingw.yml` and the build script `scripts/mingw.sh`. Check that script for the exact dependency versions used in the CI pipeline:
+
+```bash
+# Build with optional FFmpeg and OpenH264
+./scripts/mingw.sh --with-ffmpeg --with-openh264
+
+# Build static libraries
+./scripts/mingw.sh --static
+
+# Show all options
+./scripts/mingw.sh --help
+```
+
+<Tip>
+  The `scripts/mingw.sh` script operates on the host (not inside Docker) and clones all dependencies under `build-mingw/src`. It is the same script the GitHub Actions CI workflow uses, so it reflects the latest tested dependency versions.
+</Tip>

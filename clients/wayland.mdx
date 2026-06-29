@@ -1,0 +1,148 @@
+---
+title: "wlfreerdp — FreeRDP Native Wayland Client (UWAC)"
+sidebarTitle: "Wayland Client"
+description: "Guide to wlfreerdp: native Wayland integration via UWAC, building with CMake, usage examples, and how it differs from xfreerdp and sdl-freerdp."
+---
+
+`wlfreerdp` is a native Wayland RDP client that connects to a Wayland compositor directly through the **UWAC** (Use Wayland As a Client) helper library, without needing XWayland. It supports dynamic resolution updates, clipboard redirection, pointer and touch input, and keyboard handling — all communicated natively over the Wayland protocol. The binary is currently marked as **unmaintained**; for active Wayland deployments the SDL3 client (`sdl3-freerdp`) is the recommended alternative, as it also runs on Wayland via SDL's Wayland backend.
+
+<Warning>
+  `wlfreerdp` is unmaintained. Build it with `-DWITH_CLIENT_WAYLAND=ON` for evaluation purposes, but consider migrating to `sdl3-freerdp` for production use.
+</Warning>
+
+## Architecture
+
+`wlfreerdp` wraps the FreeRDP library and the UWAC layer. UWAC handles all Wayland socket communication — seat events, pointer, keyboard, clipboard, and output configuration — while FreeRDP provides the RDP transport. The client registers a shared-memory Wayland surface (`WL_SHM_FORMAT_XRGB8888`) and blits decoded GDI frames to it via `UwacWindowSubmitBuffer`.
+
+```
+wlfreerdp
+  ├── wlfreerdp.c        Main loop, pre/post connect, GDI blit
+  ├── wlf_input.c        Keyboard, pointer, touch forwarding
+  ├── wlf_cliprdr.c      Clipboard redirection channel
+  ├── wlf_disp.c         Dynamic resolution (Display Control channel)
+  ├── wlf_pointer.c      Custom cursor rendering
+  └── wlf_channels.c     Channel connect/disconnect handlers
+```
+
+## Building
+
+Install the Wayland development libraries and the UWAC library (included in the FreeRDP unified build), then configure CMake with the Wayland client enabled.
+
+```bash
+# Unified build (UWAC bundled with FreeRDP)
+cmake .. \
+  -DWITH_CLIENT_WAYLAND=ON \
+  -DCMAKE_BUILD_TYPE=Release
+
+make -j$(nproc)
+sudo make install
+```
+
+UWAC is automatically found when building FreeRDP as a unified project (`FREERDP_UNIFIED_BUILD=ON`). For external builds, `find_package(uwac)` is used and UWAC must be installed separately.
+
+## Synopsis
+
+```
+wlfreerdp [file] [/v:server[:port]] [/version] [/help]
+```
+
+`wlfreerdp` accepts all standard FreeRDP client options in addition to the ones listed here. Refer to `xfreerdp(1)` for the full option list.
+
+## Usage examples
+
+<CodeGroup>
+
+```bash Basic connection
+wlfreerdp /v:rdp.example.com
+```
+
+```bash With credentials
+wlfreerdp /v:rdp.example.com /u:alice /p:Secret123
+```
+
+```bash Fullscreen (uses first Wayland output resolution)
+wlfreerdp /v:rdp.example.com /f
+```
+
+```bash Custom window size
+wlfreerdp /v:rdp.example.com /u:alice /w:1920 /h:1080
+```
+
+```bash Dynamic resize enabled
+wlfreerdp /v:rdp.example.com /dynamic-resolution
+```
+
+```bash Clipboard and drive redirection
+wlfreerdp /v:rdp.example.com +clipboard /drive:home,/home/alice
+```
+
+```bash List Wayland outputs
+wlfreerdp /list:monitor
+```
+
+```bash Custom window title and WM class
+wlfreerdp /v:rdp.example.com /t:"Work Desktop" /wm-class:wlfreerdp
+```
+
+</CodeGroup>
+
+## Fullscreen and monitor handling
+
+When `/f` (fullscreen) is requested, `wlfreerdp` queries the first Wayland output via `UwacDisplayGetOutput()` to obtain its resolution and uses that as the RDP desktop size. If the output resolution cannot be determined, a warning is printed and the default size is used.
+
+For multi-monitor sessions in fullscreen mode the client sends a `DisplayControl` PDU listing the layout of all monitors obtained from `rdpMonitor` settings. Dynamic resolution changes (window resize) are rate-limited to a minimum interval of 500 ms to avoid flooding the server.
+
+## Smart sizing
+
+When `/smart-sizing` is active and the session is not fullscreen, the GDI framebuffer is scaled to fit the UWAC window geometry using `freerdp_image_scale()`.
+
+```bash
+wlfreerdp /v:rdp.example.com /smart-sizing:1280x800
+```
+
+## Clipboard redirection
+
+Clipboard events are handled by `wlf_cliprdr.c`, which listens for `UWAC_EVENT_CLIPBOARD_AVAILABLE`, `UWAC_EVENT_CLIPBOARD_OFFER`, and `UWAC_EVENT_CLIPBOARD_SELECT` events and forwards them to the `cliprdr` virtual channel.
+
+```bash
+wlfreerdp /v:rdp.example.com +clipboard
+```
+
+## Keyboard handling
+
+Key events arrive as `UWAC_EVENT_KEY` events and are forwarded to the RDP session. When `/grab-keyboard` is active (default), `wlfreerdp` calls `UwacSeatInhibitShortcuts()` on keyboard focus so that compositor shortcuts are suppressed and all key strokes reach the remote session.
+
+```bash
+# Disable keyboard grab (compositor shortcuts remain active)
+wlfreerdp /v:rdp.example.com -grab-keyboard
+```
+
+## Differences from xfreerdp
+
+| Feature | `wlfreerdp` | `xfreerdp` |
+|---|---|---|
+| Display system | Native Wayland (UWAC) | X11 (Xlib) |
+| XWayland required | No | No (but works under XWayland) |
+| Floatbar | Not implemented | ✅ |
+| Action scripts | Not implemented | ✅ |
+| EWMH/window manager hints | Via Wayland app-id | Via `_NET_WM_*` |
+| Maintenance status | Unmaintained | Active |
+
+## Differences from sdl3-freerdp
+
+| Feature | `wlfreerdp` | `sdl3-freerdp` |
+|---|---|---|
+| Wayland backend | UWAC (direct) | SDL3 Wayland |
+| Windows/macOS | No | ✅ |
+| Configurable hotkeys | No | ✅ (JSON config) |
+| Clipboard (SDL3) | Basic | Full |
+| Maintenance status | Unmaintained | Active |
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | Successful connection and clean disconnect |
+| non-zero | Connection failure or runtime error |
+
+For full option documentation run `wlfreerdp /help` or consult `xfreerdp(1)`, as all shared options apply equally.

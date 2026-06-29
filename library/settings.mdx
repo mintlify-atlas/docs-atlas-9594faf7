@@ -1,0 +1,251 @@
+---
+title: "RDP Settings System: Configuration and Capability Exchange"
+sidebarTitle: "Settings"
+description: "How to read and write FreeRDP connection settings using type-safe keys, covering all major categories from auth to codecs and performance flags."
+---
+
+The FreeRDP settings system is the central repository for every RDP connection parameter. Rather than a flat C struct exposed directly, settings are accessed through a type-safe, opaque API that enforces correct key-to-type pairing at compile time. Understanding when each layer of settings is active is essential to writing correct client and server code.
+
+## The Three-Tier Settings Model
+
+Every RDP endpoint operates with three distinct settings objects simultaneously:
+
+<Steps>
+  <Step title="Initial Configuration">
+    Populated by the application before `freerdp_connect()`. Contains user-supplied values such as hostname, credentials, and display geometry. This object persists for the **entire application lifecycle** and is used whenever a reconnect or redirect occurs.
+  </Step>
+  <Step title="Capability Exchange Settings">
+    Populated from the capabilities the remote end advertises during the RDP handshake. These are valid only for the **duration of a single connection** and are discarded on disconnect.
+  </Step>
+  <Step title="Merged Settings">
+    The union of the initial configuration and the capabilities received from the remote end. This is what the rendering and channel subsystems actually consult. It has the same lifetime as the connection.
+  </Step>
+</Steps>
+
+<Warning>
+When working with a proxy that has both a client-side and a server-side context, each side has its own independent settings hierarchy. Always confirm which settings pointer you are reading or writing.
+</Warning>
+
+## Creating and Destroying Settings
+
+```c
+#include <freerdp/settings.h>
+
+/* Allocate a standalone settings struct (0 = client mode) */
+rdpSettings* settings = freerdp_settings_new(0);
+
+/* Allocate a server-side settings struct */
+rdpSettings* server_settings = freerdp_settings_new(FREERDP_SETTINGS_SERVER_MODE);
+
+/* Deep-copy an existing settings object */
+rdpSettings* copy = freerdp_settings_clone(settings);
+
+/* Copy from src into dst (frees dst's existing allocations first) */
+freerdp_settings_copy(dst, src);
+
+/* Free */
+freerdp_settings_free(settings);
+```
+
+`FREERDP_SETTINGS_SERVER_MODE` (0x00000001) configures the struct for a server-side RDP endpoint. `FREERDP_SETTINGS_REMOTE_MODE` (0x00000002) marks settings as representing the remote peer's view.
+
+When using `freerdp_context_new()`, the settings struct is created automatically and accessible via `instance->context->settings`.
+
+## Type-Safe Key Enumeration
+
+All settings are identified by typed enum constants from the `FreeRDP_Settings_Keys_*` family. Using the wrong key type is a compile-time error, preventing subtle bugs where a boolean key is accidentally used with a `uint32` getter.
+
+| Enum Type | C Type | Getter | Setter |
+|---|---|---|---|
+| `FreeRDP_Settings_Keys_Bool` | `BOOL` | `freerdp_settings_get_bool` | `freerdp_settings_set_bool` |
+| `FreeRDP_Settings_Keys_Int16` | `INT16` | `freerdp_settings_get_int16` | `freerdp_settings_set_int16` |
+| `FreeRDP_Settings_Keys_UInt16` | `UINT16` | `freerdp_settings_get_uint16` | `freerdp_settings_set_uint16` |
+| `FreeRDP_Settings_Keys_Int32` | `INT32` | `freerdp_settings_get_int32` | `freerdp_settings_set_int32` |
+| `FreeRDP_Settings_Keys_UInt32` | `UINT32` | `freerdp_settings_get_uint32` | `freerdp_settings_set_uint32` |
+| `FreeRDP_Settings_Keys_Int64` | `INT64` | `freerdp_settings_get_int64` | `freerdp_settings_set_int64` |
+| `FreeRDP_Settings_Keys_UInt64` | `UINT64` | `freerdp_settings_get_uint64` | `freerdp_settings_set_uint64` |
+| `FreeRDP_Settings_Keys_String` | `const char*` | `freerdp_settings_get_string` | `freerdp_settings_set_string` |
+| `FreeRDP_Settings_Keys_Pointer` | `const void*` | `freerdp_settings_get_pointer` | `freerdp_settings_set_pointer` |
+
+### Function Signatures
+
+```c
+/* Boolean */
+BOOL freerdp_settings_get_bool(const rdpSettings* settings,
+                                FreeRDP_Settings_Keys_Bool id);
+BOOL freerdp_settings_set_bool(rdpSettings* settings,
+                                FreeRDP_Settings_Keys_Bool id, BOOL val);
+
+/* Unsigned 32-bit integer */
+UINT32 freerdp_settings_get_uint32(const rdpSettings* settings,
+                                    FreeRDP_Settings_Keys_UInt32 id);
+BOOL   freerdp_settings_set_uint32(rdpSettings* settings,
+                                    FreeRDP_Settings_Keys_UInt32 id, UINT32 val);
+
+/* String (null-terminated, heap-allocated internally) */
+const char* freerdp_settings_get_string(const rdpSettings* settings,
+                                         FreeRDP_Settings_Keys_String id);
+BOOL        freerdp_settings_set_string(rdpSettings* settings,
+                                         FreeRDP_Settings_Keys_String id,
+                                         const char* val);  /* val is copied */
+
+/* Generic pointer / array */
+const void* freerdp_settings_get_pointer(const rdpSettings* settings,
+                                          FreeRDP_Settings_Keys_Pointer id);
+BOOL        freerdp_settings_set_pointer_len(rdpSettings* settings,
+                                              FreeRDP_Settings_Keys_Pointer id,
+                                              const void* data, size_t len);
+```
+
+## Settings Categories
+
+### Connection and Authentication
+
+```c
+rdpSettings* s = instance->context->settings;
+
+/* Target server */
+freerdp_settings_set_string(s, FreeRDP_ServerHostname, "rdp.example.com");
+freerdp_settings_set_uint32(s, FreeRDP_ServerPort, 3389);
+
+/* Credentials */
+freerdp_settings_set_string(s, FreeRDP_Username, "alice");
+freerdp_settings_set_string(s, FreeRDP_Password, "hunter2");
+freerdp_settings_set_string(s, FreeRDP_Domain,   "CORP");
+
+/* Security protocol selection */
+freerdp_settings_set_bool(s, FreeRDP_NlaSecurity, TRUE);   /* NTLM/Kerberos NLA */
+freerdp_settings_set_bool(s, FreeRDP_TlsSecurity, TRUE);   /* TLS security */
+```
+
+### Display
+
+```c
+/* Resolution */
+freerdp_settings_set_uint32(s, FreeRDP_DesktopWidth,  1920);
+freerdp_settings_set_uint32(s, FreeRDP_DesktopHeight, 1080);
+freerdp_settings_set_uint32(s, FreeRDP_ColorDepth, 32);
+
+/* Color depth support bits sent to server */
+freerdp_settings_set_uint16(s, FreeRDP_SupportedColorDepths,
+    RNS_UD_24BPP_SUPPORT | RNS_UD_32BPP_SUPPORT);
+```
+
+### Performance Flags
+
+Performance flags control which visual features the client requests or disables. They are defined in `<freerdp/settings_types.h>` and stored in the `FreeRDP_PerformanceFlags` UInt32 setting.
+
+```c
+#define PERF_FLAG_NONE                  0x00000000
+#define PERF_DISABLE_WALLPAPER          0x00000001  /* no desktop background */
+#define PERF_DISABLE_FULLWINDOWDRAG     0x00000002  /* no live window drag */
+#define PERF_DISABLE_MENUANIMATIONS     0x00000004  /* no menu fade/slide */
+#define PERF_DISABLE_THEMING            0x00000008  /* classic (non-Aero) theme */
+#define PERF_DISABLE_CURSOR_SHADOW      0x00000020
+#define PERF_DISABLE_CURSORSETTINGS     0x00000040
+#define PERF_ENABLE_FONT_SMOOTHING      0x00000080  /* ClearType / anti-aliasing */
+#define PERF_ENABLE_DESKTOP_COMPOSITION 0x00000100  /* Aero Glass / DWM */
+```
+
+Setting all disable flags provides the highest-performance thin-client experience:
+
+```c
+UINT32 perf = PERF_DISABLE_WALLPAPER
+            | PERF_DISABLE_FULLWINDOWDRAG
+            | PERF_DISABLE_MENUANIMATIONS
+            | PERF_DISABLE_THEMING
+            | PERF_DISABLE_CURSOR_SHADOW;
+
+freerdp_settings_set_uint32(s, FreeRDP_PerformanceFlags, perf);
+/* Automatically splits the composite flags into individual Bool keys */
+freerdp_performance_flags_split(s);
+```
+
+`freerdp_performance_flags_split()` propagates the composite flag integer into the corresponding individual `Bool` keys (e.g. `FreeRDP_DisableWallpaper`). `freerdp_performance_flags_make()` does the reverse — reading the individual booleans and combining them back into the `UInt32`.
+
+### Connection Type
+
+The connection type hint allows the server to choose encoding parameters appropriate for the available bandwidth. Constants are defined in `<freerdp/settings_types.h>`:
+
+```c
+#define CONNECTION_TYPE_INVALID      0x00  /* no hint / unknown */
+#define CONNECTION_TYPE_MODEM        0x01  /* ~56 Kbps */
+#define CONNECTION_TYPE_BROADBAND_LOW 0x02  /* ~256 Kbps */
+#define CONNECTION_TYPE_SATELLITE    0x03  /* ~256 Kbps, high latency */
+#define CONNECTION_TYPE_BROADBAND_HIGH 0x04 /* ~2 Mbps */
+#define CONNECTION_TYPE_WAN          0x05  /* ~10 Mbps */
+#define CONNECTION_TYPE_LAN          0x06  /* ~100 Mbps or above */
+#define CONNECTION_TYPE_AUTODETECT   0x07  /* let the server measure */
+
+freerdp_settings_set_uint32(s, FreeRDP_ConnectionType,
+                             CONNECTION_TYPE_LAN);
+```
+
+### Codec Settings
+
+```c
+/* RemoteFX — recommended for LAN connections */
+freerdp_settings_set_bool(s, FreeRDP_RemoteFxCodec, TRUE);
+
+/* Graphics Pipeline (RDP 8+, requires DRDYNVC dynamic channel) */
+freerdp_settings_set_bool(s, FreeRDP_SupportGraphicsPipeline, TRUE);
+```
+
+### Channel Enabling
+
+Static and dynamic channels are registered through the settings channel collections:
+
+```c
+/* Add a static virtual channel by name */
+ADDIN_ARGV* cliprdr = freerdp_addin_argv_new(1, (const char*[]){"cliprdr"});
+freerdp_static_channel_collection_add(s, cliprdr);
+
+/* Add a dynamic virtual channel */
+ADDIN_ARGV* rdpgfx = freerdp_addin_argv_new(1, (const char*[]){"rdpgfx"});
+freerdp_dynamic_channel_collection_add(s, rdpgfx);
+```
+
+## Debugging Settings
+
+```c
+/* Dump all settings to a WLog logger at DEBUG level */
+freerdp_settings_dump(log, WLOG_DEBUG, settings);
+
+/* Log only the differences between two settings objects */
+freerdp_settings_print_diff(log, WLOG_WARN, baseline_settings, current_settings);
+```
+
+## Named Key Lookup
+
+When the key name is only known at runtime (e.g. from a configuration file), the string-to-key and key-to-type helpers make it possible to set any value generically:
+
+```c
+/* Set a value by its string name */
+freerdp_settings_set_value_for_name(settings, "ServerHostname", "rdp.example.com");
+
+/* Resolve a key name to its numeric index */
+SSIZE_T key  = freerdp_settings_get_key_for_name("PerformanceFlags");
+SSIZE_T type = freerdp_settings_get_type_for_key(key);
+const char* type_name = freerdp_settings_get_type_name_for_key(key);
+/* → "UINT32" */
+```
+
+## RDP Version Selection
+
+The `RDP_VERSION` enum in `settings_types.h` covers all negotiated protocol versions:
+
+```c
+typedef enum {
+    RDP_VERSION_4      = 0x00080001,
+    RDP_VERSION_5_PLUS = 0x00080004,
+    RDP_VERSION_10_0   = 0x00080005,
+    /* ... */
+    RDP_VERSION_10_12  = 0x00080011
+} RDP_VERSION;
+```
+
+The negotiated version is read back after `freerdp_connect()` via:
+
+```c
+UINT32 ver = freerdp_settings_get_uint32(s, FreeRDP_RdpVersion);
+```

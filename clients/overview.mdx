@@ -1,0 +1,70 @@
+---
+title: "FreeRDP Client Frontends: X11, SDL, Wayland & More"
+sidebarTitle: "Overview"
+description: "Survey of every FreeRDP client frontend — X11, SDL2, SDL3, Wayland, Windows, macOS, Android, and iOS — and when to use each one."
+---
+
+FreeRDP ships several ready-to-use client executables, each targeting a different display system or operating environment. All of them parse the same command-line options and share the same underlying FreeRDP library, so the RDP feature set is largely identical — the choice of frontend is driven by your desktop environment, portability needs, and build system preferences.
+
+## Available clients
+
+<CardGroup cols={2}>
+  <Card title="xfreerdp (X11)" icon="display" href="/clients/xfreerdp">
+    The original FreeRDP client, built on top of Xlib. Runs on any Linux or UNIX desktop running an X server — including XWayland — and supports the widest range of X11-specific features such as the floatbar, EWMH hints, and X selection clipboard. It is the most feature-complete and battle-tested client.
+  </Card>
+  <Card title="sdl-freerdp (SDL2 / SDL3)" icon="gamepad" href="/clients/sdl">
+    A cross-platform client powered by SDL2 or SDL3. Runs natively on Windows, macOS, Linux, and other SDL-supported platforms without needing an X server. The SDL3 variant is the actively maintained path; SDL2 is still supported but marked experimental.
+  </Card>
+  <Card title="wlfreerdp (Wayland)" icon="circle-nodes" href="/clients/wayland">
+    A native Wayland client based on the UWAC (Use Wayland as a Client) helper library. Avoids the XWayland layer for cleaner integration on pure Wayland desktops. Currently marked as unmaintained; consider the SDL3 client for new Wayland deployments.
+  </Card>
+  <Card title="Command-Line Reference" icon="terminal" href="/clients/command-line">
+    Complete reference for all shared command-line options — connection, display, authentication, channels, performance, and logging — applicable to every FreeRDP client frontend.
+  </Card>
+</CardGroup>
+
+## Platform matrix
+
+| Client binary | Primary platform | Display system | Maintained |
+|---|---|---|---|
+| `xfreerdp` | Linux / UNIX | X11 (Xlib) | ✅ Active |
+| `sdl3-freerdp` | Cross-platform | SDL3 | ✅ Active |
+| `sdl2-freerdp` | Cross-platform | SDL2 | ⚠️ Experimental |
+| `wlfreerdp` | Linux | Wayland (UWAC) | ⚠️ Unmaintained |
+| `freerdp-shadow-cli` | Windows / Linux | Shadow server | ✅ Active |
+| FreeRDP (macOS) | macOS | Cocoa | ✅ Active |
+| aFreeRDP | Android | SurfaceView | ✅ Active |
+
+## Choosing a client
+
+<AccordionGroup>
+  <Accordion title="I am on a standard Linux desktop (GNOME, KDE, XFCE…)">
+    Use **xfreerdp** if your session runs X11 or XWayland. It has the largest set of X11 integrations (system clipboard, window manager hints, drag-and-drop). If you are on a pure Wayland compositor and want to avoid XWayland, use **sdl3-freerdp**.
+  </Accordion>
+  <Accordion title="I need to run the client on Windows or macOS">
+    Use **sdl3-freerdp**. It is the only officially supported cross-platform client binary. Build it with `-DWITH_CLIENT_SDL=ON` (SDL3 is selected by default when SDL3 is found first).
+  </Accordion>
+  <Accordion title="I am building FreeRDP into my own application">
+    All client frontends are thin wrappers around `libfreerdp-client`. Embed that library directly and call `freerdp_client_settings_parse_command_line_arguments()` to reuse FreeRDP's option parsing. See the [command-line API reference](/clients/command-line#public-api).
+  </Accordion>
+  <Accordion title="I want a pure Wayland client without SDL">
+    **wlfreerdp** connects directly to the Wayland compositor via the UWAC library. Build it with `-DWITH_CLIENT_WAYLAND=ON`. Note it is currently unmaintained; file issues or consider contributing upstream.
+  </Accordion>
+</AccordionGroup>
+
+## Common connection syntax
+
+All clients share the same command-line grammar. The minimum required argument is `/v:` followed by a server hostname or IP address.
+
+```bash
+# xfreerdp
+xfreerdp /v:rdp.example.com /u:alice /p:Secret123
+
+# sdl3-freerdp
+sdl3-freerdp /v:rdp.example.com /u:alice /p:Secret123
+
+# wlfreerdp
+wlfreerdp /v:rdp.example.com /u:alice /p:Secret123
+```
+
+Options prefixed with `/` accept a value (`/opt:value`), Boolean options can be toggled on or off with `+opt` / `-opt`, and flags take no value (`/f` for fullscreen). Refer to the [command-line reference](/clients/command-line) for the full list.

@@ -1,0 +1,157 @@
+---
+title: "FreeRDP Server Components: Overview and Guide"
+sidebarTitle: "Server Overview"
+description: "Explore the three FreeRDP server implementations — shadow, proxy, and sample — and learn the shared abstractions used to build RDP servers."
+---
+
+FreeRDP ships three distinct server-side implementations that span a range of use cases, from capturing and streaming a live desktop to proxying connections between endpoints to providing a minimal skeleton for custom server development. All three are built on top of the same pair of core abstractions: `freerdp_listener`, which accepts incoming TCP connections, and `freerdp_peer`, which drives the RDP protocol state machine for each connected client. Understanding these shared building blocks makes it straightforward to move between the three implementations or to combine them.
+
+## Core Abstractions
+
+Every FreeRDP server starts by creating a `freerdp_listener` and registering a `PeerAccepted` callback that is invoked for each new RDP client. The callback receives a freshly created `freerdp_peer` and is responsible for setting up per-client context, registering lifecycle callbacks, and launching a service thread.
+
+```c
+/* freerdp/listener.h */
+struct rdp_freerdp_listener
+{
+    /* Open a TCP listening socket */
+    psListenerOpen             Open;
+    psListenerOpenLocal        OpenLocal;       /* Unix domain socket */
+    psListenerOpenFromSocket   OpenFromSocket;  /* adopt an existing fd */
+
+    psListenerGetEventHandles  GetEventHandles;
+    psListenerCheckFileDescriptor CheckFileDescriptor;
+    psListenerClose            Close;
+
+    /* Fired once per accepted connection */
+    psPeerAccepted             PeerAccepted;
+    psListenerCheckFileDescriptor CheckPeerAcceptRestrictions;
+};
+
+freerdp_listener* freerdp_listener_new(void);
+void              freerdp_listener_free(freerdp_listener* instance);
+```
+
+The `freerdp_peer` struct exposes typed function-pointer callbacks that map directly onto RDP connection lifecycle events:
+
+```c
+/* freerdp/peer.h — selected callbacks */
+typedef BOOL (*psPeerContextNew)      (freerdp_peer* peer, rdpContext* context);
+typedef void (*psPeerContextFree)     (freerdp_peer* peer, rdpContext* context);
+typedef BOOL (*psPeerInitialize)      (freerdp_peer* peer);
+typedef BOOL (*psPeerCapabilities)    (freerdp_peer* peer);
+typedef BOOL (*psPeerPostConnect)     (freerdp_peer* peer);
+typedef BOOL (*psPeerActivate)        (freerdp_peer* peer);
+typedef HANDLE (*psPeerGetEventHandle)(freerdp_peer* peer);
+typedef BOOL (*psPeerCheckFileDescriptor)(freerdp_peer* peer);
+```
+
+Callers allocate per-session data by setting `peer->ContextSize`, `peer->ContextNew`, and `peer->ContextFree` before calling `freerdp_peer_context_new()`. The returned `rdpContext` is immediately available as `peer->context`.
+
+## Choosing an Implementation
+
+<CardGroup cols={3}>
+  <Card
+    title="Shadow Server"
+    icon="display"
+    href="/server/shadow"
+  >
+    Captures and streams the local desktop over RDP. Supports X11, macOS Quartz, and Windows DXGI capture backends, multi-client shadowing, and full channel support including GFX pipeline and audio.
+  </Card>
+  <Card
+    title="RDP Proxy"
+    icon="shuffle"
+    href="/server/proxy"
+  >
+    Sits between an RDP client and a real RDP server, forwarding the session while optionally intercepting, inspecting, or filtering traffic through a hot-loaded plugin module system.
+  </Card>
+  <Card
+    title="Sample Server"
+    icon="code"
+    href="/server/sample"
+  >
+    A minimal, compilable reference implementation demonstrating the `rdpPeer` lifecycle and channel initialization pattern. The right starting point when building a custom RDP server from scratch.
+  </Card>
+</CardGroup>
+
+| Scenario | Recommended implementation |
+|---|---|
+| Screen sharing / remote assistance | Shadow |
+| Session recording, access control gateway, MFA injection | Proxy |
+| Building a custom application-hosting RDP server | Sample (as a template) |
+| Protocol research and fuzzing | Sample or Proxy module |
+
+## Build Flags
+
+All three server components are opt-in at CMake configure time. None of them are compiled when building only the core FreeRDP client libraries.
+
+<Tabs>
+  <Tab title="All servers">
+    ```bash
+    cmake .. \
+      -DWITH_SHADOW=ON \
+      -DWITH_PROXY=ON \
+      -DWITH_SAMPLE=ON
+    ```
+  </Tab>
+  <Tab title="Shadow only">
+    ```bash
+    cmake .. -DWITH_SHADOW=ON
+    ```
+    Requires a platform capture backend. On Linux, `libXext`, `libXfixes`, and `libXdamage` must be present for the X11 subsystem to be detected automatically.
+  </Tab>
+  <Tab title="Proxy only">
+    ```bash
+    cmake .. -DWITH_PROXY=ON
+    ```
+    The proxy module SDK (`WITH_PROXY_MODULES`) is enabled automatically when `WITH_PROXY=ON`.
+  </Tab>
+  <Tab title="Sample only">
+    ```bash
+    cmake .. -DWITH_SAMPLE=ON
+    ```
+    The sample server depends only on the core FreeRDP libraries and WinPR; no additional platform libraries are required.
+  </Tab>
+</Tabs>
+
+## Server Components at a Glance
+
+<AccordionGroup>
+  <Accordion title="Shadow server source layout">
+    The shadow server lives under `server/shadow/`. The platform-specific capture subsystems are in sub-directories (`X11/`, `Mac/`, `Win/`). The CLI front-end that produces the `freerdp-shadow-cli` binary is in `server/shadow/cli/`.
+
+    Key modules:
+
+    | File | Purpose |
+    |---|---|
+    | `shadow_server.c` | Lifecycle: `shadow_server_new`, `shadow_server_init`, `shadow_server_start/stop` |
+    | `shadow_client.c` | Per-client thread, update loop, channel negotiation |
+    | `shadow_capture.c` | Frame comparison and dirty-rectangle tracking |
+    | `shadow_encoder.c` | Codec selection (RFX, H.264/AVC, AV1) |
+    | `shadow_subsystem.c` | Platform capture abstraction entry points |
+  </Accordion>
+  <Accordion title="Proxy source layout">
+    The proxy lives under `server/proxy/`. The `pf_` prefix stands for *proxy forward*.
+
+    | File | Purpose |
+    |---|---|
+    | `pf_server.c` | Listener setup, accepts RDP clients |
+    | `pf_client.c` | Outbound RDP client connecting to the real target |
+    | `pf_config.c` | INI configuration loading into `proxyConfig` |
+    | `pf_modules.c` | Dynamic module loader and hook/filter dispatch |
+    | `pf_update.c` | Intercepts and forwards graphical update PDUs |
+    | `pf_input.c` | Intercepts and forwards keyboard and mouse events |
+  </Accordion>
+  <Accordion title="Sample server source layout">
+    The sample server lives under `server/Sample/`.
+
+    | File | Purpose |
+    |---|---|
+    | `sfreerdp.c` | Peer lifecycle, input callbacks, main loop |
+    | `sfreerdp.h` | `testPeerContext` definition |
+    | `sf_audin.c` | Audio input (microphone) channel handling |
+    | `sf_ainput.c` | Advanced input channel handling |
+    | `sf_rdpsnd.c` | Audio output channel handling |
+    | `sf_encomsp.c` | Multiparty / Lync conference channel |
+  </Accordion>
+</AccordionGroup>

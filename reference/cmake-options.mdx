@@ -1,0 +1,236 @@
+---
+title: "FreeRDP CMake Build Configuration Options Reference"
+sidebarTitle: "CMake Options"
+description: "Complete reference for all CMake build options in FreeRDP, covering clients, servers, codecs, audio, authentication, channels, and more."
+---
+
+FreeRDP uses CMake as its build system. Configuration options are declared across several files — primarily `cmake/ConfigOptions.cmake`, `CMakeLists.txt`, and per-component `CMakeLists.txt` files. Pass any option to `cmake` with the `-D<OPTION>=<VALUE>` syntax during the configure step. The example below shows a typical release build:
+
+```bash
+cmake -GNinja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DWITH_VERBOSE_WINPR_ASSERT=OFF \
+  -DCMAKE_INSTALL_PREFIX=/usr/local \
+  -B build -S .
+cmake --build build --target install
+```
+
+<Note>
+  Use `ccmake .` (Linux/macOS) or `cmake-gui` to interactively browse and toggle all available options in the current build directory.
+</Note>
+
+---
+
+## Client Frontends
+
+<Accordion title="Client frontend options">
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WITH_CLIENT_COMMON` | `ON` | Build the shared client common library (required by all clients). |
+| `WITH_CLIENT` | `ON` | Build client binaries. Depends on `WITH_CLIENT_COMMON`. |
+| `WITH_CLIENT_SDL` | `ON` | Build the SDL2/SDL3-based cross-platform client (`sdlfreerdp`). Depends on `WITH_CLIENT`. |
+| `WITH_X11` | Auto | Build the X11 client (`xfreerdp`) and X11 server support. Auto-detected on non-Windows, non-macOS, non-Android platforms. Disable with `-DWITH_X11=OFF` for headless builds. |
+| `WITH_WAYLAND` | Auto | Build the Wayland client (`wlfreerdp`). Detected automatically on Linux; disable with `-DWITH_WAYLAND=OFF`. |
+| `WITH_CLIENT_INTERFACE` | `OFF` | Expose clients as a library with a stable interface (for embedding FreeRDP in another application). |
+| `CLIENT_INTERFACE_SHARED` | `OFF` | Build the client interface library as a shared library. Depends on `WITH_CLIENT_INTERFACE`. |
+| `WITH_RDTK` | `OFF` | Build the RdTk GUI toolkit (experimental, used by some server-side shadow clients). |
+
+</Accordion>
+
+---
+
+## Server Components
+
+<Accordion title="Server component options">
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WITH_SERVER` | `ON` | Build server-side binaries and libraries. |
+| `WITH_SHADOW` | `ON` | Build the shadow server (`freerdp-shadow`), which mirrors/shares an existing local desktop session. Disable with `-DWITH_SHADOW=OFF`. |
+| `WITH_SHADOW_SUBSYSTEM` | `ON` | Build the actual platform-specific shadow subsystem implementation. Depends on `WITH_SHADOW`. |
+| `WITH_PROXY` | `ON` | Build the RDP proxy server (`freerdp-proxy`). Supports intercepting, logging, and forwarding RDP connections. Disable with `-DWITH_PROXY=OFF`. |
+| `WITH_PROXY_APP` | `ON` | Build the standalone proxy application binary. Depends on `WITH_PROXY`. |
+| `WITH_PROXY_MODULES` | `ON` | Build example proxy plugin modules. Depends on `WITH_PROXY`. |
+| `WITH_PROXY_EMULATE_SMARTCARD` | `OFF` | Compile proxy smartcard emulation support. |
+| `WITH_PLATFORM_SERVER` | `ON` | Build platform-specific server implementations (compile but currently limited functionality). |
+| `WITH_SERVER_INTERFACE` | `ON` | Build server libraries with a public interface for embedding. |
+| `WITH_SAMPLE` | `ON` | Build the sample client and server code. Disable with `-DWITH_SAMPLE=OFF`. |
+
+</Accordion>
+
+---
+
+## Codecs and Media
+
+<Accordion title="Codec and media options">
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WITH_OPENH264` | Auto | Enable OpenH264 codec support for the RDP graphics pipeline (required for `rdpgfx` H.264 mode). Automatically detected; force on with `-DWITH_OPENH264=ON`. |
+| `WITH_OPENH264_LOADING` | `OFF` | Load `openh264` at runtime via `dlopen`/`LoadLibrary` instead of linking at build time. |
+| `WITH_FFMPEG` | `ON` | Enable FFmpeg for audio and video encoding/decoding. Controls `WITH_DSP_FFMPEG` and `WITH_VIDEO_FFMPEG`. |
+| `WITH_DSP_FFMPEG` | `ON`* | Use FFmpeg for audio DSP (encoding/decoding compressed audio). *Requires `WITH_FFMPEG=ON`. |
+| `WITH_VIDEO_FFMPEG` | `ON`* | Use FFmpeg for video encoding/decoding (H.264, etc.). *Requires `WITH_FFMPEG=ON`. |
+| `WITH_VAAPI` | `OFF` | **[Experimental]** Use FFmpeg VAAPI hardware acceleration. Requires `WITH_VIDEO_FFMPEG`. |
+| `WITH_VAAPI_H264_ENCODING` | `ON`* | **[Experimental]** Use FFmpeg VAAPI for hardware H.264 encoding. Requires `WITH_VIDEO_FFMPEG`. |
+| `WITH_VIDEOTOOLBOX` | `OFF` | **[Experimental]** Use FFmpeg VideoToolbox hardware H.264 decoding on macOS/Apple platforms. |
+| `WITH_MEDIA_FOUNDATION` | `OFF` | Enable H.264 Media Foundation decoder (Windows only, not UWP). |
+| `WITH_SWSCALE` | `ON` | Use libswscale (part of FFmpeg) for image scaling. Needed for High-DPI / smart-sizing support. |
+| `WITH_SWSCALE_LOADING` | `OFF` | Load `swscale` at runtime instead of linking at build time. |
+| `WITH_CAIRO` | `OFF` | Use Cairo instead of swscale for image scaling. Alternative to `WITH_SWSCALE`. |
+| `WITH_JPEG` | `OFF` | Enable JPEG bitmap decoding. |
+| `WITH_GFX_AV1` | `OFF` | **[Experimental, unstable ABI/API]** Enable AV1 codec support in the GFX channel. |
+| `WITH_GFX_AZURE` | `OFF` | **[Experimental, unstable ABI/API]** Enable Azure GFX channel extension support. |
+| `WITH_OPENCL` | `OFF` | **[Experimental]** Enable OpenCL GPU acceleration for primitives. |
+
+</Accordion>
+
+---
+
+## Audio
+
+<Accordion title="Audio backend options">
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WITH_ALSA` | Auto | Enable ALSA audio backend (Linux). Auto-detected via `find_package(ALSA)`. |
+| `WITH_PULSE` | Auto | Enable PulseAudio backend (Linux). Auto-detected via `find_package(PulseAudio)`. |
+| `WITH_OSS` | Auto | Enable OSS (Open Sound System) audio backend. Auto-detected via `find_package(OSS)`. |
+| `WITH_SNDIO` | Auto | Enable sndio audio backend (OpenBSD). Auto-detected. |
+| `WITH_MACAUDIO` | Auto | Enable CoreAudio backend on macOS. Enabled automatically when targeting macOS (not iOS). |
+| `WITH_WINMM` | `ON`* | Use Windows Multimedia (`winmm.dll`) audio backend. *Windows only (not UWP). |
+| `WITH_WIN8` | `OFF`* | Use Windows 8+ multimedia libraries. *Windows only (not UWP). |
+| `WITH_DSP_EXPERIMENTAL` | `OFF` | Enable experimental audio encoder/decoder formats (e.g., AAC encoding). |
+
+</Accordion>
+
+---
+
+## Authentication and Cryptography
+
+<Accordion title="Authentication and crypto options">
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WITH_KRB5` | Auto | Compile Kerberos 5 authentication support. Supports MIT Kerberos and Heimdal. Required for smartcard-based NLA logon. Disable with `-DWITH_KRB5=OFF`. |
+| `WITH_PCSC` | Auto | Enable PC/SC smart card support for smartcard redirection and NLA smartcard logon. Disable with `-DWITH_PCSC=OFF`. |
+| `WITH_PKCS11` | Auto | Enable PKCS#11 support for NLA smartcard logon. Disable with `-DWITH_PKCS11=OFF`. |
+| `WITH_SMARTCARD_EMULATE` | `ON` | Emulate smart cards instead of redirecting physical readers. Useful for testing. |
+| `WITH_INTERNAL_RC4` | Auto | Use FreeRDP's built-in RC4 implementation instead of the SSL library's (needed when the SSL library has deprecated RC4, e.g., modern OpenSSL). |
+| `WITH_INTERNAL_MD4` | Auto | Use FreeRDP's built-in MD4 hash instead of the SSL library's (needed when the SSL library has deprecated MD4). |
+| `WITH_INTERNAL_MD5` | Auto | Use FreeRDP's built-in MD5 hash instead of the SSL library's. |
+| `WITH_LIBRESSL` | `OFF` | **[Experimental]** Build against LibreSSL instead of OpenSSL. |
+| `WITH_AAD` | Auto | Compile support for Azure Active Directory / Entra authentication. Requires JSON library support (`WITH_WINPR_JSON`). |
+| `WITH_JSON_DISABLED` | `OFF` | Build without any JSON library support (disables Azure AD and related features). Supported JSON libraries: cJSON, json-c. |
+| `WITH_NATIVE_SSPI` | Auto | Use the operating system's native SSPI modules (Windows). |
+
+</Accordion>
+
+---
+
+## Virtual Channel Flags
+
+Channel-level CMake options follow the pattern `CHANNEL_<NAME>` (master toggle) plus `CHANNEL_<NAME>_CLIENT` and `CHANNEL_<NAME>_SERVER` for per-side control. Dynamic channels additionally depend on `CHANNEL_DRDYNVC`.
+
+<Accordion title="Channel enable/disable flags">
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WITH_CHANNELS` | `ON` | Master toggle — build all virtual channel plugins. |
+| `WITH_CLIENT_CHANNELS` | `ON` | Build client-side channel plugins. Depends on `WITH_CLIENT_COMMON` and `WITH_CHANNELS`. |
+| `WITH_SERVER_CHANNELS` | `ON` | Build server-side channel plugins. Depends on `WITH_SERVER` and `WITH_CHANNELS`. |
+| `CHANNEL_DRDYNVC` | `ON` | Dynamic Virtual Channel multiplexer. Required for all dynamic channels. |
+| `CHANNEL_AUDIN` | `ON` | Audio Input Redirection (`audin`). |
+| `CHANNEL_RDPSND` | `ON` | Audio Output (`rdpsnd`). |
+| `CHANNEL_CLIPRDR` | `ON` | Clipboard redirection (`cliprdr`). |
+| `CHANNEL_RDPGFX` | `ON` | Graphics Pipeline (`rdpgfx`) — RDP GFX/H.264 acceleration. |
+| `CHANNEL_DISP` | `ON` | Display Update (`disp`). |
+| `CHANNEL_GEOMETRY` | `ON` | Geometry tracking (`geometry`). |
+| `CHANNEL_VIDEO` | `ON` | Video optimized remoting (`video`). |
+| `CHANNEL_GFXREDIR` | `ON` | Graphics Redirection (`gfxredir`). |
+| `CHANNEL_DRIVE` | `ON` | Drive redirection (`drive`). |
+| `CHANNEL_PRINTER` | `ON` | Printer redirection (`printer`). |
+| `CHANNEL_SERIAL` | `ON` | Serial port redirection (`serial`). Linux/macOS only. |
+| `CHANNEL_PARALLEL` | `ON` | Parallel port redirection (`parallel`). Linux only. |
+| `CHANNEL_SMARTCARD` | `ON` | Smart card redirection (`smartcard`). |
+| `CHANNEL_RDPDR` | `ON` | Device Redirection core (`rdpdr`). |
+| `CHANNEL_URBDRC` | `ON` | USB Device Redirection (`urbdrc`). Requires `libusb-1.0`. Disable with `-DCHANNEL_URBDRC=OFF`. |
+| `CHANNEL_RDPECAM` | `ON` | Camera/Video Capture Redirection (`rdpecam`). |
+| `CHANNEL_RDPEI` | `ON` | Multi-touch Input (`rdpei`). |
+| `CHANNEL_AINPUT` | `ON` | Advanced Input (`ainput`). |
+| `CHANNEL_RDPEMSC` | `ON` | Mouse Cursor (`rdpemsc`). |
+| `CHANNEL_LOCATION` | `ON` | Location / GPS data (`location`). |
+| `CHANNEL_RAIL` | `ON` | RemoteApp / RAIL (`rail`). |
+| `CHANNEL_REMDESK` | `ON` | Remote Assistance (`remdesk`). |
+| `CHANNEL_RDP2TCP` | `OFF` | TCP-over-RDP tunnel (`rdp2tcp`). Disabled by default. |
+| `CHANNEL_ENCOMSP` | `ON` | Multiparty collaboration (`encomsp`). |
+| `CHANNEL_TSMF` | `OFF` | **Deprecated** multimedia redirection (`tsmf`). Disabled by default. |
+| `CHANNEL_ECHO` | `ON` | Echo diagnostic channel (`echo`). |
+| `CHANNEL_RDPEAR` | `ON` | Authentication Redirection (`rdpear`). |
+| `CHANNEL_RDPEWA` | Auto | WebAuthn/FIDO2 Redirection (`rdpewa`). Auto-detected when `libcbor` and `libfido2` are present. Disable with `-DCHANNEL_RDPEWA=OFF`. |
+| `CHANNEL_SSHAGENT` | `OFF` | SSH Agent Forwarding (`sshagent`). Experimental; disabled by default. |
+| `CHANNEL_TELEMETRY` | `ON` | Telemetry (`telemetry`). |
+| `WITH_CUPS` | Auto | CUPS printer backend (Linux/macOS). Auto-detected; used by the `printer` channel. |
+
+</Accordion>
+
+---
+
+## Unicode
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WITH_UNICODE_BUILTIN` | `OFF` | Use FreeRDP's own built-in UTF-8 ↔ UTF-16 conversion routines instead of the system library (ICU on Linux, `NSString` on Apple). Useful for builds that must avoid ICU or want a smaller dependency footprint. |
+
+---
+
+## Platform Support and Utilities
+
+<Accordion title="Platform and utility options">
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WITH_SYSTEMD` | Auto | Export `wLog` output to the systemd journal (Linux). Auto-detected when `libsystemd` is found. Disable with `-DWITH_SYSTEMD=OFF`. |
+| `WITH_FUSE` | Auto | Enable FUSE-based file clipboard transfer in the clipboard channel (Linux/macOS). Disable with `-DWITH_FUSE=OFF`. |
+| `WITH_MANPAGES` | Auto | Generate man pages for command-line tools. On by default on non-OpenBSD, non-Windows systems. |
+| `WITH_WINPR_TOOLS` | Auto | Build WinPR helper binaries (certificate tools, NTLM hash utilities). Disable with `-DWITH_WINPR_TOOLS=OFF`. |
+| `WITH_ABSOLUTE_PLUGIN_LOAD_PATHS` | Auto | Load plugins using their absolute installation paths rather than relying solely on the library search path. |
+| `FREERDP_UNIFIED_BUILD` | `ON` | Build WinPR, uwac, RdTk, and FreeRDP in one unified CMake invocation (the standard approach). |
+| `WITH_THIRD_PARTY` | `OFF` | Build vendored third-party components included in the source tree. |
+| `WITH_FULL_CONFIG_PATH` | `OFF` | Store configuration in `<appdata>/Vendor/Product` instead of the shortened `<appdata>/product` path. |
+| `WITH_CCACHE` | `ON` | Use ccache to speed up incremental rebuilds if available on the system. |
+| `BUILD_TESTING` | `OFF` | Build the unit test suite (compatible with packaging workflows). |
+| `BUILD_FUZZERS` | `OFF` | Build libFuzzer-based fuzz tests (requires Clang). |
+
+</Accordion>
+
+---
+
+## Debug Options
+
+<Warning>
+  All `WITH_DEBUG_*` options default to `OFF` in normal builds. Enabling them — especially `WITH_DEBUG_ALL`, `WITH_DEBUG_NLA`, `WITH_DEBUG_LICENSE`, or `WITH_DEBUG_CERTIFICATE` — can **leak credentials and key material** to the log output. Never enable these in production or release builds.
+</Warning>
+
+<Accordion title="Debug and logging options">
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `WITH_DEBUG_ALL` | `OFF` | Enable all debug output (slow builds; leaks sensitive data). |
+| `WITH_DEBUG_CERTIFICATE` | `OFF` | Log certificate-related debug messages. |
+| `WITH_DEBUG_NLA` | `OFF` | Log NLA/NTLM authentication debug messages. |
+| `WITH_DEBUG_LICENSE` | `OFF` | Log RDP licensing debug messages. |
+| `WITH_DEBUG_NEGO` | `OFF` | Log protocol negotiation debug messages. |
+| `WITH_DEBUG_KBD` | `OFF` | Log keyboard input debug messages. |
+| `WITH_DEBUG_CHANNELS` | `OFF` | Log channel manager events. |
+| `WITH_DEBUG_CLIPRDR` | `OFF` | Log clipboard channel traffic. |
+| `WITH_DEBUG_RDPGFX` | `OFF` | Log GFX pipeline messages. |
+| `WITH_DEBUG_TRANSPORT` | `OFF` | Log low-level transport messages. |
+| `WITH_DEBUG_RDP` | `OFF` | Log core RDP PDU messages. |
+| `WITH_DEBUG_RFX` | `OFF` | Log RemoteFX codec messages. |
+| `WITH_DEBUG_SCARD` | `OFF` | Log smart card messages. |
+| `WITH_DEBUG_SYMBOLS` | `OFF` | Pack debug symbols into the installer package. |
+| `WITH_VERBOSE_WINPR_ASSERT` | `ON` | Include detailed assertion messages (recommended `OFF` for release builds to reduce binary size). |
+
+</Accordion>

@@ -1,0 +1,360 @@
+---
+title: "FreeRDP Frequently Asked Questions and Answers"
+sidebarTitle: "FAQ"
+description: "Common FreeRDP questions answered: 2.x vs 3.x differences, NLA vs TLS, H.264, audio, drive and printer redirection, RD Gateway, WinPR, and log levels."
+---
+
+FreeRDP is a free, Apache 2.0-licensed implementation of the Remote Desktop Protocol. This page answers the most frequently asked questions drawn from the project's documentation, source code, README, and community discussions. If your question isn't answered here, visit the [GitHub issue tracker](https://github.com/FreeRDP/FreeRDP/issues) or join the community chat.
+
+---
+
+<Accordion title="1. What is the difference between FreeRDP 2.x and 3.x?">
+
+FreeRDP 3.x is the current supported stable release series. **FreeRDP 2.x reached end-of-life and no longer receives security fixes or updates.** If you are on 2.x, migrating to 3.x is strongly recommended.
+
+Key differences between the two series:
+
+**API and ABI**
+The 3.x series introduced breaking API and ABI changes. Symbols deprecated in 2.x have been removed or marked with `WITHOUT_FREERDP_3x_DEPRECATED`. If you are building against the FreeRDP library, you will need to update your code.
+
+**Security**
+Only the `stable-3.0` branch and `master` receive CVE fixes and security advisories. The `stable-2.0` branch is unsupported.
+
+**New features in 3.x**
+- WebAuthn/FIDO2 channel (`rdpewa`) — hardware security key passthrough
+- Camera redirection (`rdpecam`) with growing platform coverage
+- Azure AD / Entra authentication (`WITH_AAD`)
+- SDL3-based client alongside the existing SDL2 client
+- TLS security level defaults to 2 with a minimum of TLS 1.2 enforced
+- FIDO2 PIN authentication (`AUTH_FIDO_PIN`)
+- Improved Android client with RAIL and camera support
+- Session statistics logging API
+
+**Deprecated symbols**
+Use `-DWITH_FREERDP_DEPRECATED=OFF` and `-DWITHOUT_FREERDP_3x_DEPRECATED=ON` to audit your builds for deprecated API usage.
+
+</Accordion>
+
+<Accordion title="2. Which authentication method should I use — NLA, TLS, or RDP?">
+
+**Use NLA (Network Level Authentication) whenever possible.** It is the most secure option and the default when the server advertises it.
+
+| Method | Security | Notes |
+|--------|----------|-------|
+| **NLA** | ✅ High | Authenticates before session opens; uses CredSSP + Kerberos/NTLM over TLS. Requires server support (Windows Vista+ / 2008+). |
+| **TLS** | ⚠️ Medium | Encrypts the session with TLS but credentials traverse the channel during login. Certificate pinning is critical. |
+| **RDP** | ❌ Low | Legacy RC4 encryption with no certificate verification. Only for very old servers. |
+
+You can override the negotiated security with command-line flags:
+
+```bash
+# Force NLA (default when available)
+xfreerdp /v:rdp.example.com /u:User /p:Pass /sec:nla
+
+# Force TLS only
+xfreerdp /v:rdp.example.com /u:User /p:Pass /sec:tls
+
+# Legacy RDP security (avoid)
+xfreerdp /v:rdp.example.com /u:User /p:Pass /sec:rdp
+```
+
+For NLA with **Kerberos**, build FreeRDP with `-DWITH_KRB5=ON` (enabled automatically when MIT or Heimdal is detected).
+
+For **smartcard NLA**, build with `-DWITH_PCSC=ON` and `-DWITH_PKCS11=ON`.
+
+For **Azure AD / Entra** authentication, build with `-DWITH_AAD=ON` (requires a JSON library — cJSON or json-c).
+
+</Accordion>
+
+<Accordion title="3. How do I enable H.264 / hardware-accelerated graphics?">
+
+H.264 is used by the **RDP Graphics Pipeline (`rdpgfx`)** channel, which is the primary graphics mode for Windows 8.1 / Server 2012 and later. There are several ways to enable it at build time:
+
+**Option 1 — FFmpeg (recommended, enabled by default)**
+
+FFmpeg is the easiest path and is enabled by default (`-DWITH_FFMPEG=ON`). It brings in both H.264 encoding/decoding and audio DSP support. Make sure FFmpeg development headers are installed before running CMake:
+
+```bash
+# Debian / Ubuntu
+sudo apt install libavcodec-dev libavutil-dev libswscale-dev
+
+# Fedora
+sudo dnf install ffmpeg-devel
+```
+
+**Option 2 — OpenH264 (Cisco)**
+
+Enable with `-DWITH_OPENH264=ON`. OpenH264 is a software H.264 codec that can also be loaded at runtime (`-DWITH_OPENH264_LOADING=ON`) to avoid GPL licence concerns.
+
+**Option 3 — Hardware acceleration (VAAPI)**
+
+For hardware-accelerated H.264 decoding/encoding on Linux via VAAPI:
+
+```bash
+cmake -DWITH_FFMPEG=ON -DWITH_VAAPI=ON -DWITH_VAAPI_H264_ENCODING=ON ..
+```
+
+<Warning>
+  VAAPI support is currently experimental. The `WITH_VAAPI_H264_ENCODING` option will print a warning during CMake configuration.
+</Warning>
+
+**Option 4 — VideoToolbox (macOS)**
+
+Enable with `-DWITH_VIDEOTOOLBOX=ON` for hardware H.264 decoding via Apple's VideoToolbox framework on macOS. This option is also experimental.
+
+**Option 5 — Windows Media Foundation**
+
+On Windows (non-UWP), enable `-DWITH_MEDIA_FOUNDATION=ON` for native H.264 decoding via Media Foundation.
+
+Once built with codec support, the GFX pipeline is negotiated automatically. You can verify it is active by checking the log output for `rdpgfx` channel messages.
+
+</Accordion>
+
+<Accordion title="4. Why is my audio not working?">
+
+Audio in FreeRDP is handled by two channels: `rdpsnd` (output / playback) and `audin` (input / microphone). Each uses platform-specific backends that must be detected at build time.
+
+**Step 1 — Verify the backend was built**
+
+Check CMake output or `cmake -L` for the backend variable relevant to your platform:
+
+| Platform | Backend variable | Install requirement |
+|----------|-----------------|---------------------|
+| Linux (ALSA) | `WITH_ALSA=ON` | `libasound2-dev` |
+| Linux (PulseAudio) | `WITH_PULSE=ON` | `libpulse-dev` |
+| Linux (OSS) | `WITH_OSS=ON` | OSS headers |
+| macOS | `WITH_MACAUDIO=ON` | Auto (system frameworks) |
+| Windows | `WITH_WINMM=ON` | Auto (system) |
+| Android | `WITH_OPENSLES=ON` | NDK |
+
+**Step 2 — Verify codec support**
+
+The most widely supported and recommended audio codecs are:
+
+- **PCM (uncompressed)** — always available
+- **AAC** — requires FFmpeg (`-DWITH_DSP_FFMPEG=ON`) and `-DWITH_DSP_EXPERIMENTAL=ON` for encoding
+- **GSM** — lower bandwidth codec, requires `libgsm`
+
+Install FFmpeg dev libraries and rebuild if audio quality is poor or codecs are missing.
+
+**Step 3 — Enable audio on the command line**
+
+Audio redirection is enabled by default when the channels are built. If it is disabled, pass:
+
+```bash
+xfreerdp /v:rdp.example.com /sound /microphone
+```
+
+**Step 4 — Check log output**
+
+Run with verbose logging to see if the audio backend initialises correctly:
+
+```bash
+xfreerdp /v:rdp.example.com /log-level:DEBUG 2>&1 | grep -i "rdpsnd\|audin\|audio"
+```
+
+</Accordion>
+
+<Accordion title="5. How do I redirect a local drive or printer?">
+
+**Drive redirection** exposes a local directory as a network drive inside the remote session.
+
+```bash
+# Redirect /home/user/Documents as drive "docs"
+xfreerdp /v:rdp.example.com /drive:docs,/home/user/Documents
+
+# Redirect the home directory
+xfreerdp /v:rdp.example.com /home-drive
+
+# Redirect all local drives
+xfreerdp /v:rdp.example.com /drives
+```
+
+Inside the Windows session, the redirected path appears under **This PC → FreeRDP Virtual Drive** (or the name you specified).
+
+**Printer redirection** forwards a local printer into the remote session. On Linux/macOS this requires CUPS (built with `-DWITH_CUPS=ON`):
+
+```bash
+# Redirect the default printer
+xfreerdp /v:rdp.example.com /printer
+
+# Redirect a specific printer by name
+xfreerdp /v:rdp.example.com /printer:"My Printer",driver_name
+```
+
+<Note>
+  Drive and printer redirection are handled by the `drive` and `printer` sub-channels, both routed through the `rdpdr` device-redirection channel. Ensure `CHANNEL_RDPDR=ON` and the corresponding device channel are enabled in your build.
+</Note>
+
+For **clipboard file transfer** (copy-paste of files between client and server), the `cliprdr` channel handles this. On Linux/macOS, FUSE support (`-DWITH_FUSE=ON`) is required to make the file data accessible to the local application during a paste operation.
+
+</Accordion>
+
+<Accordion title="6. How do I connect through an RD Gateway?">
+
+An RD Gateway (Remote Desktop Gateway) allows RDP connections to traverse firewalls over HTTPS. FreeRDP supports RD Gateway connections natively.
+
+**Basic gateway connection:**
+
+```bash
+xfreerdp /v:internal-server.corp.example.com \
+          /g:rdgateway.example.com \
+          /u:DOMAIN\username \
+          /p:password
+```
+
+**Gateway with separate credentials:**
+
+```bash
+xfreerdp /v:internal-server.corp.example.com \
+          /g:rdgateway.example.com \
+          /gu:DOMAIN\gwuser \
+          /gp:gwpassword \
+          /gd:DOMAIN \
+          /u:DOMAIN\username \
+          /p:password
+```
+
+**Gateway options:**
+
+| Flag | Description |
+|------|-------------|
+| `/g:<host>` | Gateway hostname (optionally `:port`) |
+| `/gu:<user>` | Gateway username (separate from RDP credentials) |
+| `/gp:<pass>` | Gateway password |
+| `/gd:<domain>` | Gateway domain |
+| `/gt:<type>` | Gateway transport type (`rpc`, `http`, `auto`) |
+
+The gateway's TLS certificate is verified separately from the RDP server's certificate. Ensure your certificate authority is trusted, or accept the gateway's fingerprint on first connection. The certificate validation callback receives `VERIFY_CERT_FLAG_GATEWAY` when validating the gateway.
+
+</Accordion>
+
+<Accordion title="7. What is WinPR and do I need it?">
+
+**WinPR** (Windows Portable Runtime) is a companion library that ships alongside FreeRDP. It provides a portable implementation of the Windows API surface — things like threads, synchronisation primitives, registry access, named pipes, SSPI (authentication), and cryptographic functions — so that FreeRDP's code can use consistent cross-platform abstractions rather than `#ifdef`-heavy platform code.
+
+You always need WinPR when building or using FreeRDP. It is not optional. By default, `FREERDP_UNIFIED_BUILD=ON` builds WinPR and FreeRDP together in a single CMake invocation, which is the standard and recommended approach.
+
+**WinPR's key components include:**
+
+- `winpr/sspi` — SSPI / NTLM / Kerberos authentication (used for NLA)
+- `winpr/crypto` — cryptographic wrappers over OpenSSL/MBedTLS
+- `winpr/crt` — C runtime portability layer
+- `winpr/io` — asynchronous I/O abstractions
+- `winpr/wlog` — the logging subsystem used throughout FreeRDP and WinPR
+
+WinPR helper binaries (`-DWITH_WINPR_TOOLS=ON`) include utilities such as `winpr-hash` for generating NTLM hashes and `winpr-makecert` for creating test certificates.
+
+</Accordion>
+
+<Accordion title="8. How do I build FreeRDP without X11 (headless / server-only)?">
+
+To build FreeRDP without any graphical client frontend — for example, to embed the library, build a server, or build inside a headless CI environment — disable the X11 and Wayland clients:
+
+```bash
+cmake -GNinja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DWITH_X11=OFF \
+  -DWITH_WAYLAND=OFF \
+  -DWITH_CLIENT_SDL=OFF \
+  -DWITH_SERVER=ON \
+  -DWITH_SHADOW=ON \
+  -DWITH_PROXY=ON \
+  -B build -S .
+```
+
+This will build the FreeRDP libraries, WinPR, the RDP proxy, and the shadow server without any X11 or graphical dependencies.
+
+For a **library-only** build (no executables at all):
+
+```bash
+cmake -GNinja \
+  -DWITH_X11=OFF \
+  -DWITH_WAYLAND=OFF \
+  -DWITH_CLIENT_SDL=OFF \
+  -DWITH_CLIENT=OFF \
+  -DWITH_SERVER=OFF \
+  -DWITH_SHADOW=OFF \
+  -DWITH_PROXY=OFF \
+  -DWITH_SAMPLE=OFF \
+  -B build -S .
+```
+
+<Note>
+  The FreeRDP core library (`libfreerdp`) and WinPR (`libwinpr`) are always built regardless of client/server flags. All virtual channels are independent of the graphical frontends.
+</Note>
+
+</Accordion>
+
+<Accordion title="9. How do I set the log level for debugging?">
+
+FreeRDP uses **WinPR's wLog** logging system, which supports hierarchical log levels and per-component filters.
+
+**Setting the global log level on the command line:**
+
+```bash
+# Levels: TRACE, DEBUG, INFO, WARN, ERROR, FATAL, OFF
+xfreerdp /v:rdp.example.com /log-level:DEBUG
+```
+
+**Filtering by component with log-filters:**
+
+```bash
+# Only show debug output for the NLA and rdpgfx subsystems
+xfreerdp /v:rdp.example.com /log-level:WARN /log-filters:com.freerdp.core.nla:DEBUG,com.freerdp.channels.rdpgfx:TRACE
+```
+
+**Via environment variable:**
+
+```bash
+export WLOG_LEVEL=DEBUG
+xfreerdp /v:rdp.example.com
+```
+
+**Log levels (most to least verbose):**
+
+| Level | Description |
+|-------|-------------|
+| `TRACE` | Very fine-grained, all internal calls |
+| `DEBUG` | Developer-level debugging information |
+| `INFO` | General informational messages |
+| `WARN` | Warnings (default effective level) |
+| `ERROR` | Error conditions |
+| `FATAL` | Fatal errors before exit |
+| `OFF` | Disable all logging |
+
+<Warning>
+  Setting `DEBUG` or `TRACE` for NLA, negotiation, or certificate components will log credential and key material to the terminal. Use only in controlled test environments.
+</Warning>
+
+</Accordion>
+
+<Accordion title="10. Where can I get help?">
+
+FreeRDP has an active community across several channels:
+
+**Real-time chat:**
+
+- **Matrix room:** [`#FreeRDP:matrix.org`](https://matrix.to/#/#FreeRDP:matrix.org) — the main community chat room
+- **IRC:** `#freerdp` on `irc.oftc.net` (bridged to the Matrix room)
+
+**Mailing list:**
+
+- [freerdp-devel mailing list on SourceForge](https://lists.sourceforge.net/lists/listinfo/freerdp-devel) — for development discussion and questions
+
+**GitHub:**
+
+- [Issue tracker](https://github.com/FreeRDP/FreeRDP/issues) — bug reports and feature requests
+- [Wiki / FAQ](https://github.com/FreeRDP/FreeRDP/wiki/FAQ) — maintained community FAQ
+- [API documentation](https://pub.freerdp.com/api/) — Doxygen-generated API reference
+
+**Security issues:**
+
+- **Do not** open a public GitHub issue for security vulnerabilities. Use the [GitHub Security Advisory form](https://github.com/FreeRDP/FreeRDP/security/advisories/new) or email **security@freerdp.com** (GPG key available at [https://pub.freerdp.com/FreeRDP-security-team.pub.asc](https://pub.freerdp.com/FreeRDP-security-team.pub.asc)).
+
+**Releases and downloads:**
+
+- Release tarballs: [https://pub.freerdp.com/releases/](https://pub.freerdp.com/releases/)
+- Project website: [https://www.freerdp.com/](https://www.freerdp.com/)
+
+</Accordion>

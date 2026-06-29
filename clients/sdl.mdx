@@ -1,0 +1,169 @@
+---
+title: "sdl-freerdp — Cross-Platform SDL2/SDL3 RDP Client"
+sidebarTitle: "SDL Client"
+description: "Guide to sdl-freerdp: SDL2 vs SDL3 variants, cross-platform support, building with CMake, usage examples, and configurable keyboard shortcuts."
+---
+
+`sdl-freerdp` is a cross-platform FreeRDP client built on the Simple DirectMedia Layer (SDL) library. Unlike `xfreerdp`, which requires an X server, the SDL client runs natively on Linux (X11 and Wayland), Windows, and macOS using the same binary. FreeRDP ships two variants: `sdl2-freerdp` targets SDL2 and `sdl3-freerdp` targets SDL3. SDL3 is the actively maintained path — SDL2 support exists but is marked as experimental.
+
+## SDL2 vs SDL3
+
+| | `sdl2-freerdp` | `sdl3-freerdp` |
+|---|---|---|
+| SDL version | SDL2 | SDL3 |
+| Status | Experimental | Active |
+| Binary name | `sdl2-freerdp` (or `freerdp` without `-DWITH_CLIENT_SDL_VERSIONED`) | `sdl3-freerdp` |
+| Clipboard | Basic | Full (`sdl_clip`) |
+| Context management | Direct | Dedicated `sdl_context` |
+| CMake flag | `-DWITH_CLIENT_SDL2=ON` | `-DWITH_CLIENT_SDL=ON` (default when SDL3 found) |
+
+<Warning>
+  SDL2 support is experimental and unmaintained. New projects should use `sdl3-freerdp`. To explicitly disable SDL2 during builds pass `-DWITH_CLIENT_SDL2=OFF`.
+</Warning>
+
+## Building
+
+Enable the SDL3 client when configuring FreeRDP with CMake. SDL3 must be installed on the system.
+
+```bash
+# SDL3 client (recommended)
+cmake .. \
+  -DWITH_CLIENT_SDL=ON \
+  -DCMAKE_BUILD_TYPE=Release
+
+make -j$(nproc)
+sudo make install
+```
+
+To keep separate versioned binary names (e.g. `sdl3-freerdp` rather than the plain `freerdp` alias) pass `-DWITH_CLIENT_SDL_VERSIONED=ON`.
+
+```bash
+cmake .. \
+  -DWITH_CLIENT_SDL=ON \
+  -DWITH_CLIENT_SDL_VERSIONED=ON \
+  -DCMAKE_BUILD_TYPE=Release
+```
+
+## Synopsis
+
+```
+sdl3-freerdp [file] [options] [/v:server[:port]]
+```
+
+The SDL client accepts the same command-line arguments as `xfreerdp`. A `.rdp` configuration file can be passed as the first positional argument.
+
+## Usage examples
+
+<CodeGroup>
+
+```bash Basic connection
+sdl3-freerdp /v:rdp.example.com
+```
+
+```bash With credentials
+sdl3-freerdp /v:rdp.example.com /u:JohnDoe /p:Pwd123!
+```
+
+```bash Fullscreen
+sdl3-freerdp /v:rdp.example.com /u:alice /f
+```
+
+```bash Custom window size
+sdl3-freerdp /v:rdp.example.com /u:JohnDoe /p:Pwd123! /w:1366 /h:768
+```
+
+```bash Half the display height
+sdl3-freerdp /v:rdp.contoso.com /u:USER /size:50%h
+```
+
+```bash Drive and clipboard redirection
+sdl3-freerdp /v:rdp.example.com /drive:home,/home/user +clipboard
+```
+
+```bash Load an .rdp file with a password override
+sdl3-freerdp connection.rdp /p:Pwd123! /f
+```
+
+```bash Hyper-V console
+sdl3-freerdp /v:192.168.1.100 /u:JohnDoe /p:Pwd123! \
+  /vmconnect:C824F53E-95D2-46C6-9A18-23A5BB403532
+```
+
+</CodeGroup>
+
+## Keyboard shortcuts
+
+The SDL client uses a configurable modifier key (`SDL_KeyModMask`, default `KMOD_RSHIFT`) combined with a trigger key to execute built-in actions. The default bindings are:
+
+| Shortcut (default) | Action |
+|---|---|
+| `RShift + Return` | Toggle fullscreen (`SDL_SCANCODE_RETURN`) |
+| `RShift + M` | Minimize the window (`SDL_SCANCODE_M`) |
+| `RShift + R` | Toggle local window resizable state (`SDL_SCANCODE_R`) |
+| `RShift + G` | Toggle keyboard and mouse grab (`SDL_SCANCODE_G`) |
+| `RShift + D` | Disconnect from the RDP session (`SDL_SCANCODE_D`) |
+
+<Info>
+  When keyboard grab is active all key events — including local system shortcuts — are forwarded to the remote session. Use the grab shortcut to release control.
+</Info>
+
+## Configuration file
+
+The SDL3 client stores per-user preferences as JSON under `$XDG_CONFIG_HOME/<vendor>/<product>/sdl-freerdp.json` (typically `~/.config/freerdp/sdl-freerdp.json`). All shortcut keys are overridable using SDL scancode names from the [SDL_Scancode documentation](https://wiki.libsdl.org/SDL3/SDL_Scancode).
+
+```json
+{
+  "SDL_KeyModMask": ["KMOD_RSHIFT"],
+  "SDL_Fullscreen": "SDL_SCANCODE_RETURN",
+  "SDL_Minimize": "SDL_SCANCODE_M",
+  "SDL_Resizeable": "SDL_SCANCODE_R",
+  "SDL_Grab": "SDL_SCANCODE_G",
+  "SDL_Disconnect": "SDL_SCANCODE_D"
+}
+```
+
+To disable all hotkeys set `SDL_KeyModMask` to `["KEYMOD_NONE"]`.
+
+## Global configuration
+
+A system-wide configuration file at `@SYSCONF_DIR@/sdl-freerdp.json` supports the `isUserConfigEnabled` boolean key to allow or block the per-user configuration file entirely.
+
+```json
+{
+  "isUserConfigEnabled": true
+}
+```
+
+## Multi-monitor on wlroots compositors
+
+On wlroots-based Wayland compositors (Sway, Hyprland, etc.) display information may not be available to off-screen windows. Set the `FREERDP_WLROOTS_HACK` environment variable to work around this:
+
+| Value | Effect |
+|---|---|
+| `0` | Disable the hack entirely |
+| `1` | Enable for fullscreen sessions only |
+| `force` | Enable for all sessions (windowed sessions may misbehave) |
+
+```bash
+FREERDP_WLROOTS_HACK=1 sdl3-freerdp /v:rdp.example.com /f /multimon
+```
+
+## Channel and device redirection
+
+The SDL client supports the same redirection options as `xfreerdp`. Common examples:
+
+```bash
+# Clipboard
+sdl3-freerdp /v:rdp.example.com +clipboard
+
+# Drive redirection
+sdl3-freerdp /v:rdp.example.com /drive:work,/home/alice/work
+
+# Audio output and microphone
+sdl3-freerdp /v:rdp.example.com /sound /microphone
+
+# USB device by ID
+sdl3-freerdp /v:rdp.example.com /usb:id,dev:054c:0268
+```
+
+See the [command-line reference](/clients/command-line) for the full set of options shared across all FreeRDP clients.

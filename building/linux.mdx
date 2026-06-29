@@ -1,0 +1,222 @@
+---
+title: "Building FreeRDP on Linux: Full Installation Guide"
+sidebarTitle: "Linux"
+description: "Install prerequisites on Debian/Ubuntu, then configure and build FreeRDP with X11, Wayland, SDL, H264, ALSA/PulseAudio, and proxy server support."
+---
+
+Linux is the primary development platform for FreeRDP. The build system is CMake and supports a full range of optional features — from the X11 and Wayland display clients to H264 hardware acceleration, audio backends, smartcard redirection, and the built-in RDP proxy and shadow servers. The steps below walk through installing packages on Debian/Ubuntu and then configuring and building FreeRDP with the most common feature combinations.
+
+## Install Prerequisites
+
+The minimum required packages are CMake ≥ 3.13, a C compiler, `pkg-config`, and the OpenSSL development headers. The extended list below adds the recommended codec and display libraries.
+
+<Steps>
+  <Step title="Core build tools">
+    ```bash
+    sudo apt update
+    sudo apt install -y \
+      build-essential \
+      cmake \
+      ninja-build \
+      pkg-config \
+      git
+    ```
+  </Step>
+
+  <Step title="SSL and Kerberos">
+    ```bash
+    sudo apt install -y \
+      libssl-dev \
+      libkrb5-dev
+    ```
+  </Step>
+
+  <Step title="Display backends (X11 and Wayland)">
+    ```bash
+    sudo apt install -y \
+      libx11-dev \
+      libxext-dev \
+      libxinerama-dev \
+      libxcursor-dev \
+      libxdamage-dev \
+      libxv-dev \
+      libxkbfile-dev \
+      libxtst-dev \
+      libxrandr-dev \
+      libxi-dev \
+      libxrender-dev \
+      libwayland-dev \
+      wayland-protocols
+    ```
+  </Step>
+
+  <Step title="SDL client">
+    ```bash
+    sudo apt install -y libsdl2-dev libsdl2-ttf-dev
+    ```
+  </Step>
+
+  <Step title="H264 codecs">
+    ```bash
+    sudo apt install -y \
+      libopenh264-dev \
+      libavcodec-dev \
+      libavutil-dev \
+      libavformat-dev \
+      libswscale-dev \
+      libswresample-dev
+    ```
+  </Step>
+
+  <Step title="Audio backends">
+    ```bash
+    sudo apt install -y \
+      libasound2-dev \
+      libpulse-dev \
+      libsoxr-dev
+    ```
+  </Step>
+
+  <Step title="Smartcard, USB, and clipboard">
+    ```bash
+    sudo apt install -y \
+      libpcsclite-dev \
+      libusb-1.0-0-dev \
+      libfuse3-dev \
+      libcups2-dev
+    ```
+  </Step>
+
+  <Step title="JSON (required for Azure AD logon)">
+    ```bash
+    sudo apt install -y libcjson-dev
+    ```
+  </Step>
+
+  <Step title="WebAuthn / FIDO2 (optional)">
+    ```bash
+    sudo apt install -y libcbor-dev libfido2-dev
+    ```
+  </Step>
+</Steps>
+
+## Configure with CMake
+
+CMake must be invoked from a separate build directory (out-of-source build). The example below uses `/tmp/freerdp/src` as the source tree and `/tmp/freerdp/build` as the build directory.
+
+### Minimal configuration
+
+```bash
+cmake -GNinja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DWITH_VERBOSE_WINPR_ASSERT=OFF \
+  -B /tmp/freerdp/build \
+  -S /tmp/freerdp/src
+```
+
+### Full-featured configuration
+
+The flags below enable all commonly used features on a modern Linux desktop or server:
+
+```bash
+cmake -GNinja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DWITH_VERBOSE_WINPR_ASSERT=OFF \
+  -DWITH_X11=ON \
+  -DWITH_WAYLAND=ON \
+  -DWITH_CLIENT_SDL=ON \
+  -DWITH_OPENSSL=ON \
+  -DWITH_KRB5=ON \
+  -DWITH_OPENH264=ON \
+  -DWITH_FFMPEG=ON \
+  -DWITH_DSP_FFMPEG=ON \
+  -DWITH_SWSCALE=ON \
+  -DWITH_ALSA=ON \
+  -DWITH_PULSE=ON \
+  -DWITH_CUPS=ON \
+  -DWITH_FUSE=ON \
+  -DWITH_PCSC=ON \
+  -DWITH_PROXY=ON \
+  -DWITH_SHADOW=ON \
+  -DWITH_SAMPLE=ON \
+  -B /tmp/freerdp/build \
+  -S /tmp/freerdp/src
+```
+
+<Note>
+  CMake automatically detects libraries found via `pkg-config`. If a library is installed in a non-standard prefix, set `CMAKE_PREFIX_PATH` to that prefix so CMake can locate its `.pc` file:
+
+  ```bash
+  -DCMAKE_PREFIX_PATH=/opt/custom/prefix
+  ```
+</Note>
+
+## Build and Install
+
+```bash
+# Build (adjust -j to the number of CPU cores)
+cmake --build /tmp/freerdp/build
+
+# Install to the default system prefix (/usr/local)
+sudo cmake --build /tmp/freerdp/build --target install
+```
+
+To install to a custom prefix instead of `/usr/local`, add `-DCMAKE_INSTALL_PREFIX=/your/prefix` to the `cmake` configure step, then run the install target without `sudo`.
+
+## Feature Flag Reference
+
+The table below summarises the most-used CMake flags for Linux builds.
+
+| Feature | Flag | Default |
+|---------|------|---------|
+| X11 client (`xfreerdp`) | `-DWITH_X11=ON/OFF` | ON |
+| Wayland client (`wlfreerdp`) | `-DWITH_WAYLAND=ON/OFF` | ON |
+| SDL client | `-DWITH_CLIENT_SDL=ON/OFF` | ON |
+| OpenH264 | `-DWITH_OPENH264=ON/OFF` | OFF |
+| FFmpeg video | `-DWITH_FFMPEG=ON/OFF` | OFF |
+| FFmpeg audio DSP | `-DWITH_DSP_FFMPEG=ON/OFF` | OFF |
+| swscale (scaling) | `-DWITH_SWSCALE=ON/OFF` | OFF |
+| ALSA audio | `-DWITH_ALSA=ON/OFF` | ON |
+| PulseAudio | `-DWITH_PULSE=ON/OFF` | ON |
+| OSS audio | `-DWITH_OSS=ON/OFF` | OFF |
+| GSM codec | `-DWITH_GSM=ON/OFF` | OFF |
+| Experimental DSP | `-DWITH_DSP_EXPERIMENTAL=ON/OFF` | OFF |
+| Smartcard (PCSC) | `-DWITH_PCSC=ON/OFF` | ON |
+| pkcs11 smartcard | `-DWITH_PKCS11=ON/OFF` | ON |
+| USB redirection | `-DCHANNEL_URBDRC=ON/OFF` | ON |
+| FUSE clipboard | `-DWITH_FUSE=ON/OFF` | ON |
+| CUPS printing | `-DWITH_CUPS=ON/OFF` | ON |
+| systemd logging | `-DWITH_SYSTEMD=ON/OFF` | ON |
+| WebAuthn / FIDO2 | `-DCHANNEL_RDPEWA=ON/OFF` | auto |
+| RDP proxy server | `-DWITH_PROXY=ON/OFF` | ON |
+| Shadow server | `-DWITH_SHADOW=ON/OFF` | ON |
+| Sample binaries | `-DWITH_SAMPLE=ON/OFF` | ON |
+| Kerberos | `-DWITH_KRB5=ON/OFF` | ON |
+| JSON / Azure AD | `-DWITH_JSON_DISABLED=ON/OFF` | OFF |
+
+## Build Type Recommendations
+
+<CardGroup cols={2}>
+  <Card title="Release" icon="rocket">
+    `-DCMAKE_BUILD_TYPE=Release -DWITH_VERBOSE_WINPR_ASSERT=OFF`
+
+    Fully optimised, smallest binary size. Use for distribution packages and production deployments.
+  </Card>
+  <Card title="RelWithDebInfo" icon="bug">
+    `-DCMAKE_BUILD_TYPE=RelWithDebInfo`
+
+    Optimised but retains DWARF debug symbols. Useful when profiling or post-mortem debugging production binaries.
+  </Card>
+  <Card title="Debug" icon="code">
+    `-DCMAKE_BUILD_TYPE=Debug -DWITH_VERBOSE_WINPR_ASSERT=ON`
+
+    No optimisation, full assertions. Recommended for active development and reproducing crashes.
+  </Card>
+  <Card title="Use ccmake" icon="sliders">
+    Run `ccmake /tmp/freerdp/build` after the initial configure step to get an interactive TUI showing all detected features and their current ON/OFF state.
+  </Card>
+</CardGroup>
+
+<Tip>
+  FreeRDP also supports **CMake preload files** stored under `ci/` in the repository. Pass one with `cmake -C ci/<preload>.cmake ...` to reproduce the exact CI build configuration locally.
+</Tip>

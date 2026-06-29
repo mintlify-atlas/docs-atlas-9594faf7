@@ -1,0 +1,640 @@
+---
+title: "FreeRDP Command-Line Options: Full Reference Guide"
+sidebarTitle: "Command Line"
+description: "Complete reference for FreeRDP command-line options: connection, display, authentication, channels, performance, and logging flags shared by all clients."
+---
+
+All FreeRDP client frontends — `xfreerdp`, `sdl3-freerdp`, `sdl2-freerdp`, and `wlfreerdp` — parse the same command-line grammar through the shared `freerdp-client` library. Options use a `/key:value` syntax for valued arguments, `+key` / `-key` to toggle Booleans on or off, and bare `/key` for flags that take no value.
+
+```
+client [file.rdp] [/option:value] [+bool-option] [-bool-option] [/flag]
+```
+
+## Connection
+
+<ParamField path="/v" type="string" required>
+  Target server: hostname, IP address (IPv4 or IPv6), or `vsock://<number>`. Optionally append `:<port>`. Also accepts a path to a named pipe or `|:<number>` to pass a TCP socket directly.
+
+  ```bash
+  xfreerdp /v:rdp.example.com
+  xfreerdp /v:192.168.1.10:3389
+  xfreerdp /v:[2001:db8::1]
+  ```
+</ParamField>
+
+<ParamField path="/port" type="number">
+  Explicit server port number (default: 3389). Alternative to embedding the port in `/v:`.
+
+  ```bash
+  xfreerdp /v:rdp.example.com /port:3390
+  ```
+</ParamField>
+
+<ParamField path="/u" type="string">
+  Username. Accepts `DOMAIN\user`, `user@domain`, or bare `user`.
+
+  ```bash
+  xfreerdp /v:rdp.example.com /u:alice
+  xfreerdp /v:rdp.example.com /u:CORP\\alice
+  ```
+</ParamField>
+
+<ParamField path="/d" type="string">
+  Windows domain name.
+
+  ```bash
+  xfreerdp /v:rdp.example.com /u:alice /d:CORP
+  ```
+</ParamField>
+
+<ParamField path="/p" type="string">
+  Password. Pass `/p` without a value to suppress interactive password prompts when no credentials are required.
+
+  ```bash
+  xfreerdp /v:rdp.example.com /u:alice /p:Secret123
+  ```
+</ParamField>
+
+<ParamField path="/vmconnect" type="string">
+  Hyper-V console connection. Accepts an optional VM GUID. Sets port to 2179 and disables protocol negotiation automatically.
+
+  ```bash
+  xfreerdp /v:hyperv-host /vmconnect:C824F53E-95D2-46C6-9A18-23A5BB403532
+  ```
+</ParamField>
+
+<ParamField path="/shell" type="string">
+  Alternate shell to launch instead of the default desktop.
+</ParamField>
+
+<ParamField path="/shell-dir" type="string">
+  Working directory for the alternate shell.
+</ParamField>
+
+<ParamField path="/timeout" type="number">
+  Connection timeout in milliseconds (default: 9000). Increase for high-latency links.
+</ParamField>
+
+<ParamField path="/auto-reconnect" type="boolean">
+  Automatically reconnect after a dropped connection. Use `-auto-reconnect` to disable.
+</ParamField>
+
+---
+
+## Display
+
+<ParamField path="/w" type="number">
+  Desktop width in pixels (default: 1024).
+</ParamField>
+
+<ParamField path="/h" type="number">
+  Desktop height in pixels (default: 768).
+</ParamField>
+
+<ParamField path="/size" type="string">
+  Combined size as `<W>x<H>` or `<percent>%w` / `<percent>%h` (percentage of the local display width or height). Default: `1024x768`.
+
+  ```bash
+  xfreerdp /v:rdp.example.com /size:1920x1080
+  xfreerdp /v:rdp.example.com /size:50%h
+  ```
+</ParamField>
+
+<ParamField path="/f" type="flag">
+  Start in fullscreen mode. `Ctrl+Alt+Enter` toggles fullscreen at runtime.
+</ParamField>
+
+<ParamField path="/workarea" type="flag">
+  Size the session to the available work area (excluding taskbars/panels).
+</ParamField>
+
+<ParamField path="/multimon" type="flag">
+  Use all connected monitors. Pass `/multimon:force` to force multi-monitor mode regardless of server capability negotiation.
+</ParamField>
+
+<ParamField path="/span" type="flag">
+  Span the desktop across multiple monitors (legacy option; prefer `/multimon`).
+</ParamField>
+
+<ParamField path="/monitors" type="string">
+  Comma-separated list of monitor IDs to use. Effective only in fullscreen or multi-monitor mode. Run `/list:monitor` to enumerate available monitors.
+
+  ```bash
+  xfreerdp /v:rdp.example.com /multimon /monitors:0,1
+  ```
+</ParamField>
+
+<ParamField path="/dynamic-resolution" type="boolean">
+  Send display resolution updates to the server when the local window is resized. Default: off.
+</ParamField>
+
+<ParamField path="/smart-sizing" type="string">
+  Scale the remote framebuffer to fit the local window. Optionally specify a target `<W>x<H>` for the scaled viewport.
+</ParamField>
+
+<ParamField path="/scale" type="number">
+  Display scaling factor. Valid values: `100`, `140`, `180`. Default: `100`.
+</ParamField>
+
+<ParamField path="/scale-desktop" type="number">
+  Scaling factor for desktop applications as a percentage (100–500). Default: `100`.
+</ParamField>
+
+<ParamField path="/scale-device" type="number">
+  Scaling factor for Store/UWP applications. Valid values: `100`, `140`, `180`. Default: `100`.
+</ParamField>
+
+<ParamField path="/orientation" type="number">
+  Display orientation in degrees: `0`, `90`, `180`, or `270`.
+</ParamField>
+
+<ParamField path="/window-position" type="string">
+  Initial window position as `<x>x<y>`.
+</ParamField>
+
+---
+
+## Authentication
+
+<ParamField path="/sec" type="string">
+  Force a specific security protocol. Using `/sec:<method>` alone enables that method and disables all others; `/sec:<method>:[on|off]` toggles only the named method.
+
+  | Value | Protocol |
+  |---|---|
+  | `rdp` | Classic RDP security |
+  | `tls` | TLS only |
+  | `nla` | Network Level Authentication (Kerberos / NTLM) |
+  | `ext` | NLA extended |
+  | `aad` | Azure Active Directory |
+
+  ```bash
+  # Force NLA
+  xfreerdp /v:rdp.example.com /sec:nla
+
+  # Enable AAD, leave others unchanged
+  xfreerdp /v:rdp.example.com /sec:aad:on
+  ```
+</ParamField>
+
+<ParamField path="/tls" type="string">
+  TLS configuration sub-options (comma-separated):
+
+  | Sub-option | Description |
+  |---|---|
+  | `ciphers:<list\|netmon\|ma>` | Override allowed cipher suites |
+  | `seclevel:<0-5>` | OpenSSL security level (default: 1) |
+  | `secrets-file:<path>` | Write TLS secrets to file in SSLKEYLOGFILE format |
+  | `enforce[:<version>]` | Force a specific TLS version (`ssl3`, `1.0`, `1.1`, `1.2`, `1.3`) |
+
+  ```bash
+  # Lower TLS security level for older servers
+  xfreerdp /v:rdp.example.com /tls:seclevel:0
+
+  # Force TLS 1.2
+  xfreerdp /v:rdp.example.com /tls:enforce:1.2
+  ```
+</ParamField>
+
+<ParamField path="/cert" type="string">
+  Certificate acceptance policy. Multiple comma-separated options are allowed.
+
+  | Value | Meaning |
+  |---|---|
+  | `deny` | Abort connection if certificate does not match |
+  | `ignore` | Skip all certificate checks (insecure) |
+  | `tofu` | Accept on first connect; reject on mismatch thereafter |
+  | `name:<name>` | Use an alternate name for local certificate matching |
+  | `fingerprint:<hash>:<hex>` | Accept a specific certificate fingerprint unconditionally |
+
+  ```bash
+  xfreerdp /v:rdp.example.com /cert:tofu
+  xfreerdp /v:rdp.example.com /cert:fingerprint:sha256:AA:BB:CC:DD:...
+  ```
+</ParamField>
+
+<ParamField path="/smartcard" type="string">
+  Redirect smart card devices. Optionally filter by a substring of the card name.
+
+  ```bash
+  xfreerdp /v:rdp.example.com /smartcard
+  xfreerdp /v:rdp.example.com /smartcard:MySmartCard
+  ```
+</ParamField>
+
+<ParamField path="/smartcard-logon" type="string">
+  Authenticate using a smart card (optional certificate parameters):
+
+  ```bash
+  xfreerdp /v:rdp.example.com \
+    /smartcard-logon:cert:/path/to/cert.pem,key:/path/to/key.pem,pin:1234
+  ```
+</ParamField>
+
+<ParamField path="/pth" type="string">
+  Pass-the-hash authentication (restricted admin mode). Provide the NTLM password hash instead of a plaintext password.
+</ParamField>
+
+<ParamField path="/kerberos" type="string">
+  Kerberos-specific options including KDC URL, ticket lifetimes, credential cache, armoring, PKINIT anchors, and PKCS#11 module path.
+</ParamField>
+
+---
+
+## Channels and redirection
+
+<Tabs>
+  <Tab title="Clipboard">
+    <ParamField path="/clipboard" type="boolean/string">
+      Enable clipboard redirection. Accepts optional sub-options:
+
+      | Sub-option | Description |
+      |---|---|
+      | `use-selection:<atom>` | X11 selection atom (`CLIPBOARD` or `PRIMARY`) |
+      | `direction-to:[all\|local\|remote\|off]` | Control allowed clipboard direction |
+      | `files-to:[all\|local\|remote\|off]` | Control allowed file-clipboard direction |
+
+      ```bash
+      xfreerdp /v:rdp.example.com +clipboard
+      xfreerdp /v:rdp.example.com /clipboard:use-selection:PRIMARY
+      xfreerdp /v:rdp.example.com /clipboard:direction-to:remote
+      ```
+    </ParamField>
+  </Tab>
+  <Tab title="Drive">
+    <ParamField path="/drive" type="string">
+      Redirect a local directory as a named share (`\\tsclient\<name>` in the session).
+
+      ```bash
+      /drive:<name>,<path>
+
+      # Examples
+      xfreerdp /v:rdp.example.com /drive:home,/home/alice
+      xfreerdp /v:rdp.example.com /drive:hotplug,*
+      ```
+    </ParamField>
+
+    <ParamField path="/drives" type="boolean">
+      Redirect all local mount points as shares.
+    </ParamField>
+
+    <ParamField path="/home-drive" type="boolean">
+      Redirect the current user's home directory as a share.
+    </ParamField>
+  </Tab>
+  <Tab title="Audio">
+    <ParamField path="/sound" type="string">
+      Redirect audio output (playback). Accepts optional sub-options for system (`sys:`), device (`dev:`), format, rate, channel, latency, and quality.
+
+      ```bash
+      xfreerdp /v:rdp.example.com /sound:sys:alsa
+      xfreerdp /v:rdp.example.com /sound:sys:pulse,latency:100
+      ```
+    </ParamField>
+
+    <ParamField path="/microphone" type="string">
+      Redirect audio input (microphone). Accepts the same sub-options as `/sound`.
+
+      ```bash
+      xfreerdp /v:rdp.example.com /microphone:sys:alsa
+      ```
+    </ParamField>
+
+    <ParamField path="/audio-mode" type="string">
+      Audio output mode: `none` / `0`, `redirect` / `1`, or `server` / `2`.
+    </ParamField>
+  </Tab>
+  <Tab title="USB & Devices">
+    <ParamField path="/usb" type="string">
+      Redirect USB devices. Filter by vendor:product ID, bus:address, or use `auto`.
+
+      ```bash
+      xfreerdp /v:rdp.example.com /usb:id,dev:054c:0268
+      xfreerdp /v:rdp.example.com /usb:addr:1:3
+      xfreerdp /v:rdp.example.com /usb:auto
+      ```
+    </ParamField>
+
+    <ParamField path="/printer" type="string">
+      Redirect a printer. Format: `<name>[,<driver>[,default]]`.
+
+      ```bash
+      xfreerdp /v:rdp.example.com /printer:MyPrinter,Generic\ PostScript
+      ```
+    </ParamField>
+
+    <ParamField path="/serial" type="string">
+      Redirect a serial port. Format: `<name>[,<path>[,<driver>[,permissive]]]`.
+
+      ```bash
+      xfreerdp /v:rdp.example.com /serial:COM1,/dev/ttyS0
+      ```
+    </ParamField>
+
+    <ParamField path="/parallel" type="string">
+      Redirect a parallel port. Format: `<name>[,<path>]`.
+    </ParamField>
+  </Tab>
+  <Tab title="RemoteApp">
+    <ParamField path="/app" type="string">
+      Launch a RemoteApp instead of a full desktop. Sub-options:
+
+      | Sub-option | Description |
+      |---|---|
+      | `program:[<path>\|\|<alias>]` | Application path or shell alias |
+      | `cmd:<command>` | Command-line arguments |
+      | `file:<filename>` | File to open with the application |
+      | `guid:<guid>` | Application GUID |
+      | `name:<name>` | Display name |
+      | `workdir:<dir>` | Working directory |
+      | `hidef:[on\|off]` | High-definition RemoteApp |
+
+      ```bash
+      xfreerdp /v:rdp.example.com /app:program:||notepad
+      xfreerdp /v:rdp.example.com /app:program:"C:\Windows\notepad.exe",name:Notepad
+      ```
+    </ParamField>
+  </Tab>
+</Tabs>
+
+---
+
+## Performance
+
+<ParamField path="/network" type="string">
+  Network profile — adjusts visual quality presets automatically. Valid values: `modem`, `broadband` (alias for `broadband-high`), `broadband-low`, `broadband-high`, `wan`, `lan`, `auto`.
+
+  ```bash
+  xfreerdp /v:rdp.example.com /network:lan
+  xfreerdp /v:rdp.example.com /network:wan
+  ```
+</ParamField>
+
+<ParamField path="/compression" type="boolean">
+  Data compression. Enabled by default; pass `-compression` to disable. Alias: `-z`.
+</ParamField>
+
+<ParamField path="/compression-level" type="number">
+  Compression aggressiveness: `0`, `1`, or `2`.
+</ParamField>
+
+<ParamField path="/gfx" type="string">
+  Enable the RDP8+ graphics pipeline. Accepts optional sub-options:
+
+  | Sub-option | Description |
+  |---|---|
+  | `progressive[:on\|off]` | Progressive codec |
+  | `RFX[:on\|off]` | RemoteFX in GFX pipeline |
+  | `AVC420[:on\|off]` | H.264 AVC 4:2:0 |
+  | `AVC444[:on\|off]` | H.264 AVC 4:4:4 |
+  | `AV1[:on\|off\|i444\|i420]` | AV1 codec (requires `WITH_GFX_AV1`) |
+  | `mask:<value>` | Capability mask |
+  | `small-cache[:on\|off]` | Small cache mode |
+  | `thin-client[:on\|off]` | Thin-client mode |
+  | `frame-ack[:on\|off]` | Frame acknowledgements |
+
+  ```bash
+  xfreerdp /v:rdp.example.com /gfx
+  xfreerdp /v:rdp.example.com /gfx:AVC420
+  xfreerdp /v:rdp.example.com /gfx:progressive
+  ```
+</ParamField>
+
+<ParamField path="/rfx" type="flag">
+  Enable the RemoteFX codec (independent of the GFX pipeline).
+
+  ```bash
+  xfreerdp /v:rdp.example.com /rfx
+  ```
+</ParamField>
+
+<ParamField path="/rfx-mode" type="string">
+  RemoteFX mode: `image` or `video`.
+</ParamField>
+
+<ParamField path="/bpp" type="number">
+  Session color depth in bits per pixel: `8`, `15`, `16`, `24`, or `32`. Default: `16`.
+
+  ```bash
+  xfreerdp /v:rdp.example.com /bpp:32
+  ```
+</ParamField>
+
+<ParamField path="/cache" type="string">
+  Fine-tune bitmap, codec, glyph, and offscreen caches:
+
+  ```bash
+  /cache:bitmap[:on|off],codec[:rfx|nsc],glyph[:on|off],offscreen[:on|off]
+  /cache:persist                        # persistent bitmap cache
+  /cache:persist-file:<path>            # custom persistent cache file
+  ```
+</ParamField>
+
+<ParamField path="/gdi" type="string">
+  GDI rendering backend: `sw` (software) or `hw` (hardware-accelerated).
+</ParamField>
+
+---
+
+## Logging
+
+<ParamField path="/log-level" type="string">
+  Default log level for all FreeRDP components. Values: `OFF`, `FATAL`, `ERROR`, `WARN`, `INFO`, `DEBUG`, `TRACE`.
+
+  ```bash
+  xfreerdp /v:rdp.example.com /log-level:DEBUG
+  ```
+</ParamField>
+
+<ParamField path="/log-filters" type="string">
+  Per-tag log level overrides. Format: `<tag>:<level>[,<tag>:<level>,...]`. Wildcards are supported. See `wLog(7)` for details.
+
+  ```bash
+  # Trace only the NLA and certificate subsystems
+  xfreerdp /v:rdp.example.com \
+    /log-filters:com.freerdp.core.nla:TRACE,com.freerdp.crypto:DEBUG
+  ```
+</ParamField>
+
+---
+
+## Keyboard
+
+<ParamField path="/kbd" type="string">
+  Keyboard-related sub-options:
+
+  | Sub-option | Description |
+  |---|---|
+  | `layout:<id\|name>` | Keyboard layout announced to the server |
+  | `lang:<0xid>` | Keyboard language identifier |
+  | `fn-key:<value>` | Function key value |
+  | `type:<value>` | Keyboard type identifier |
+  | `subtype:<value>` | Keyboard subtype identifier |
+  | `unicode[:on\|off]` | Send Unicode key events |
+  | `remap:<from>=<to>` | Remap RDP scancodes (comma-separated) |
+  | `pipe:<filename>` | Named pipe for injecting text |
+
+  ```bash
+  # Swap Left Ctrl and Caps Lock by scancode
+  xfreerdp /v:rdp.example.com /kbd:remap:29=58,remap:58=29
+
+  # Set explicit keyboard layout
+  xfreerdp /v:rdp.example.com /kbd:layout:0x0409
+  ```
+</ParamField>
+
+<ParamField path="/grab-keyboard" type="boolean">
+  Grab keyboard focus and forward all keys to the remote session. Default: on.
+</ParamField>
+
+---
+
+## Miscellaneous
+
+<ParamField path="/t" type="string">
+  Window title. Alias: `title`.
+</ParamField>
+
+<ParamField path="/floatbar" type="string">
+  Control the X11 floatbar (xfreerdp only). Sub-options: `sticky:[on|off]`, `default:[visible|hidden]`, `show:[always|fullscreen|window]`.
+</ParamField>
+
+<ParamField path="/proxy" type="string">
+  HTTP or SOCKS5 proxy. Format: `[<proto>://][<user>:<password>@]<host>[:<port>]`. Overrides environment variables. Protocol defaults to `http`; specify `socks5://` explicitly for SOCKS5.
+</ParamField>
+
+<ParamField path="/gateway" type="string">
+  RD Gateway connection. Specify hostname, credentials, and transport type in a single option:
+
+  ```bash
+  xfreerdp /v:rdp.example.com \
+    /gateway:g:gw.example.com,u:alice,d:CORP,p:Secret,type:http
+  ```
+</ParamField>
+
+<ParamField path="/list" type="string">
+  Print available options for a sub-system and exit. Values: `kbd`, `kbd-scancode`, `kbd-lang`, `smartcard`, `monitor`, `tune`, `timezones`.
+
+  ```bash
+  xfreerdp /list:monitor
+  xfreerdp /list:kbd
+  ```
+</ParamField>
+
+<ParamField path="/version" type="flag">
+  Print the FreeRDP version and exit.
+</ParamField>
+
+<ParamField path="/buildconfig" type="flag">
+  Print the build configuration and exit.
+</ParamField>
+
+<ParamField path="/help" type="flag">
+  Print the full help text and exit. Alias: `/?`.
+</ParamField>
+
+---
+
+## Public API
+
+All FreeRDP client binaries use the same parsing routines exposed by `libfreerdp-client`. Embed FreeRDP in your own application and call these functions to reuse the full argument set.
+
+```c
+#include <freerdp/client/cmdline.h>
+```
+
+### `freerdp_client_settings_parse_command_line_arguments`
+
+Parse `argc`/`argv` into an `rdpSettings` instance.
+
+```c
+WINPR_ATTR_NODISCARD
+FREERDP_API int freerdp_client_settings_parse_command_line_arguments(
+    rdpSettings* settings,
+    int          argc,
+    char**       argv,
+    BOOL         allowUnknown);
+```
+
+Returns `0` on success, or a negative `COMMAND_LINE_ERROR` code on failure. Pass `allowUnknown = TRUE` to silently ignore unrecognised options.
+
+### `freerdp_client_settings_parse_command_line_arguments_ex`
+
+Extended variant that also accepts a custom argument table and handler function (available since FreeRDP 3.0).
+
+```c
+WINPR_ATTR_NODISCARD
+FREERDP_API int freerdp_client_settings_parse_command_line_arguments_ex(
+    rdpSettings*                          settings,
+    int                                   argc,
+    char**                                argv,
+    BOOL                                  allowUnknown,
+    COMMAND_LINE_ARGUMENT_A*              args,
+    size_t                                count,
+    freerdp_command_line_handle_option_t  handle_option,
+    void*                                 handle_userdata);
+```
+
+### `freerdp_client_settings_parse_command_line_arguments_with_flags`
+
+Adds a `flags` parameter for fine-grained control. Available since FreeRDP 3.26.
+
+```c
+WINPR_ATTR_NODISCARD
+FREERDP_API int freerdp_client_settings_parse_command_line_arguments_with_flags(
+    rdpSettings*                          settings,
+    int                                   argc,
+    char**                                argv,
+    BOOL                                  allowUnknown,
+    COMMAND_LINE_ARGUMENT_A*              args,
+    size_t                                count,
+    freerdp_command_line_handle_option_t  handle_option,
+    void*                                 handle_userdata,
+    UINT32                                flags,
+    ...);
+```
+
+Supported flags (`FREERDP_SETTINGS_CMD_PARSE_FLAGS`):
+
+| Flag | Value | Description |
+|---|---|---|
+| `FREERDP_SETTINGS_CMD_PARSE_NO_FLAGS` | `0x0000` | Default behaviour (same as `_ex`) |
+| `FREERDP_SETTINGS_CMD_PARSE_SUPPRESS_WARNINGS` | `0x0002` | Suppress parse warning output |
+
+### Custom argument callback
+
+```c
+/** Called for each custom argument found during parsing.
+ *  @param arg  The matched argument (name, value, flags).
+ *  @param custom  User-supplied context pointer.
+ *  @return 0 for success, or a COMMAND_LINE_ERROR code.
+ */
+typedef int (*freerdp_command_line_handle_option_t)(
+    const COMMAND_LINE_ARGUMENT_A* arg,
+    void*                          custom);
+```
+
+### Helper functions
+
+```c
+/* Print version string */
+FREERDP_API BOOL freerdp_client_print_version(void);
+
+/* Print build configuration */
+FREERDP_API BOOL freerdp_client_print_buildconfig(void);
+
+/* Print all command-line help */
+FREERDP_API BOOL freerdp_client_print_command_line_help(int argc, char** argv);
+
+/* Handle the status code returned by parse functions and print
+   appropriate help/version output */
+FREERDP_API int freerdp_client_settings_command_line_status_print(
+    rdpSettings* settings, int status, int argc, char** argv);
+
+/* Parse "domain\user" or "user@domain" into separate strings */
+FREERDP_API BOOL freerdp_parse_username(
+    const char* username, char** user, char** domain);
+
+/* Parse "hostname[:port]" into separate host and port */
+FREERDP_API BOOL freerdp_parse_hostname(
+    const char* hostname, char** host, int* port);
+```

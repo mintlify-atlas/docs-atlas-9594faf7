@@ -1,0 +1,155 @@
+---
+title: "Building FreeRDP on macOS: Homebrew OpenSSL and CMake"
+sidebarTitle: "macOS"
+description: "Set PKG_CONFIG_PATH for Homebrew or MacPorts OpenSSL on El Capitan and later, then configure and build FreeRDP with the standard CMake workflow."
+---
+
+macOS ships without OpenSSL development headers — Apple removed them starting with OS X El Capitan (10.11). Before running CMake, you must install OpenSSL through a package manager such as Homebrew or MacPorts and then tell the build system where to find it by setting `PKG_CONFIG_PATH`. Once that prerequisite is satisfied, the rest of the build follows the same CMake configure-build-install pattern used on other platforms.
+
+## Install Dependencies
+
+<CodeGroup>
+  ```bash Homebrew
+  brew install \
+    openssl \
+    cmake \
+    ninja \
+    pkg-config \
+    sdl2 \
+    sdl2_ttf \
+    libusb \
+    cjson \
+    krb5
+  ```
+
+  ```bash MacPorts
+  sudo port install \
+    openssl \
+    cmake \
+    ninja \
+    pkgconfig \
+    libsdl2 \
+    libusb \
+    cjson
+  ```
+</CodeGroup>
+
+## Set PKG_CONFIG_PATH
+
+Apple's System Integrity Protection prevents `pkg-config` from finding Homebrew's keg-only OpenSSL automatically. You must export `PKG_CONFIG_PATH` pointing at the OpenSSL `lib/pkgconfig` directory before calling `cmake`.
+
+<CodeGroup>
+  ```bash Homebrew
+  export PKG_CONFIG_PATH=$(brew --prefix)/opt/openssl/lib/pkgconfig
+  ```
+
+  ```bash MacPorts
+  export PKG_CONFIG_PATH=/opt/local/lib/pkgconfig
+  ```
+</CodeGroup>
+
+<Warning>
+  If you skip this step, CMake will fail to find OpenSSL and the configure step will abort with a missing SSL library error. Always export `PKG_CONFIG_PATH` in the same shell session where you run `cmake`.
+</Warning>
+
+## Configure with CMake
+
+With `PKG_CONFIG_PATH` set, run CMake from a separate build directory:
+
+```bash
+cmake -GNinja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DWITH_VERBOSE_WINPR_ASSERT=OFF \
+  -B /tmp/freerdp/build \
+  -S /path/to/freerdp/src
+```
+
+### Enabling Optional Features
+
+```bash
+cmake -GNinja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DWITH_VERBOSE_WINPR_ASSERT=OFF \
+  -DWITH_OPENSSL=ON \
+  -DWITH_CLIENT_SDL=ON \
+  -DWITH_MACAUDIO=ON \
+  -DWITH_CUPS=ON \
+  -DWITH_FUSE=ON \
+  -DWITH_OPENH264=ON \
+  -DWITH_SWSCALE=ON \
+  -B /tmp/freerdp/build \
+  -S /path/to/freerdp/src
+```
+
+<Note>
+  X11 and Wayland support (`-DWITH_X11`, `-DWITH_WAYLAND`) are disabled by default on Apple platforms. macOS uses the SDL client or the macOS-native client instead. The `WITH_MACAUDIO` flag enables the CoreAudio sound backend, which is on by default when building for macOS (not iOS).
+</Note>
+
+### Custom Install Prefix
+
+To install into a local directory instead of `/usr/local`:
+
+```bash
+cmake -GNinja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=$HOME/.local \
+  -B /tmp/freerdp/build \
+  -S /path/to/freerdp/src
+```
+
+## Build and Install
+
+```bash
+# Build
+cmake --build /tmp/freerdp/build
+
+# Install
+cmake --build /tmp/freerdp/build --target install
+```
+
+## macOS-Specific CMake Flags
+
+| Feature | Flag | Default |
+|---------|------|---------|
+| macOS audio (CoreAudio) | `-DWITH_MACAUDIO=ON/OFF` | ON |
+| SDL client | `-DWITH_CLIENT_SDL=ON/OFF` | ON |
+| CUPS printing | `-DWITH_CUPS=ON/OFF` | ON |
+| FUSE clipboard | `-DWITH_FUSE=ON/OFF` | ON |
+| X11 support | `-DWITH_X11=ON/OFF` | OFF |
+| OpenH264 | `-DWITH_OPENH264=ON/OFF` | OFF |
+| FFmpeg | `-DWITH_FFMPEG=ON/OFF` | OFF |
+| swscale (scaling) | `-DWITH_SWSCALE=ON/OFF` | OFF |
+| Kerberos | `-DWITH_KRB5=ON/OFF` | ON |
+| Smartcard (PCSC) | `-DWITH_PCSC=ON/OFF` | ON |
+
+<Tip>
+  After the initial configure, you can run `ccmake /tmp/freerdp/build` to inspect all detected features in an interactive curses UI. This is particularly useful on macOS where Homebrew package locations can vary depending on whether you are on Apple Silicon (`/opt/homebrew`) or Intel (`/usr/local`).
+</Tip>
+
+## Troubleshooting
+
+**OpenSSL not found even after setting `PKG_CONFIG_PATH`**
+
+On Apple Silicon the Homebrew prefix is `/opt/homebrew` rather than `/usr/local`. Verify the correct prefix with:
+
+```bash
+brew --prefix
+# Apple Silicon: /opt/homebrew
+# Intel:         /usr/local
+```
+
+Then re-export:
+
+```bash
+export PKG_CONFIG_PATH=$(brew --prefix)/opt/openssl/lib/pkgconfig
+```
+
+**`cmake` version too old**
+
+macOS ships an outdated CMake via Xcode. Install a current version with Homebrew:
+
+```bash
+brew install cmake
+# Ensure /opt/homebrew/bin (or /usr/local/bin) appears before /usr/bin in PATH
+export PATH="$(brew --prefix)/bin:$PATH"
+```

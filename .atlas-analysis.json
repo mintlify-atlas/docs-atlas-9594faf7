@@ -1,0 +1,97 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "FreeRDP",
+  "projectDescription": "FreeRDP is a free, open-source implementation of the Remote Desktop Protocol (RDP) providing a cross-platform C library, multiple client frontends (X11, SDL, Wayland, Windows, macOS, Android, iOS), server components (proxy, shadow), and the WinPR Windows portability runtime.",
+  "theme": "aspen",
+  "primaryColor": "#040404",
+  "lightColor": "#66a5b8",
+  "darkColor": "#184863",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "building/overview",
+              "building/linux",
+              "building/windows",
+              "building/macos",
+              "building/android",
+              "building/ios"
+            ]
+          },
+          {
+            "group": "Client Usage",
+            "pages": [
+              "clients/overview",
+              "clients/xfreerdp",
+              "clients/sdl",
+              "clients/wayland",
+              "clients/command-line"
+            ]
+          },
+          {
+            "group": "Server Components",
+            "pages": [
+              "server/overview",
+              "server/shadow",
+              "server/proxy",
+              "server/sample"
+            ]
+          },
+          {
+            "group": "Library Integration",
+            "pages": [
+              "library/core-api",
+              "library/settings",
+              "library/channels",
+              "library/winpr",
+              "library/logging"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/channels-list",
+              "reference/cmake-options",
+              "reference/security",
+              "reference/faq"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Full Apache-licensed RDP client and server library in C",
+    "Multi-platform client frontends: X11, SDL2/3, Wayland, Windows, macOS, Android, iOS",
+    "Shadow server for local desktop screen-sharing over RDP",
+    "Pluggable RDP proxy with module system for inspection/modification",
+    "30+ virtual channel plugins: clipboard, audio, graphics pipeline, drive/printer/smartcard redirection, USB, camera",
+    "WinPR (Windows Portability Runtime) providing Win32 API compatibility on Linux/macOS/Android",
+    "Codec support: H.264 (OpenH264/FFmpeg), RemoteFX, NSCodec, ClearCodec, JPEG",
+    "Flexible WLog logging system with multiple appenders and runtime configuration",
+    "RDP settings system with 3-tier lifecycle (initial config, capability exchange, merged)",
+    "Support for NLA/TLS/RDP/Kerberos authentication and FIDO2/WebAuthn"
+  ],
+  "publicApiSurface": [
+    "freerdp_client_settings_parse_command_line_arguments()",
+    "freerdp_context_new() / freerdp_context_free()",
+    "freerdp_connect() / freerdp_disconnect()",
+    "freerdp_settings_get_*(rdpSettings*, FreeRDP_Settings_Keys_*)",
+    "freerdp_settings_set_*(rdpSettings*, FreeRDP_Settings_Keys_*, value)",
+    "rdpClientContext / RDP_CLIENT_ENTRY_POINTS",
+    "freerdp_listener_new() / freerdp_listener_free()",
+    "rdpPeer / freerdp_peer_new()",
+    "WinPR: CreateThread, WaitForSingleObject, RegOpenKeyEx, CreateFile (Win32 compat)",
+    "WLog: WLog_GetRoot(), WLog_SetLevel(), WLOG_* environment variables",
+    "Channel plugin API: DVCPluginEntry, StaticChannelEntry",
+    "Proxy module API: pf_modules_register_plugin()",
+    "freerdp_assistance_* (Remote Assistance)",
+    "freerdp_client_codecs_* (codec negotiation)",
+    "crypto: freerdp_certificate_*, freerdp_privatekey_*"
+  ]
+}

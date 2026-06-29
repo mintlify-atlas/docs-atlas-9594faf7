@@ -1,0 +1,305 @@
+---
+title: "Virtual Channel Plugin System: SVC, DVC, and Addins"
+sidebarTitle: "Channels"
+description: "How FreeRDP's addin system loads static and dynamic virtual channel plugins at runtime, with entry-point APIs and a guide to all built-in channels."
+---
+
+FreeRDP's virtual channel subsystem gives you two orthogonal extension mechanisms for sending data over an RDP session: **Static Virtual Channels (SVC)** multiplexed over the main connection, and **Dynamic Virtual Channels (DVC)** opened on demand through the DRDYNVC transport channel. Both are implemented as shared-library **addins** discovered and loaded at runtime.
+
+## Static vs Dynamic Virtual Channels
+
+<CardGroup cols={2}>
+  <Card title="Static Virtual Channels (SVC)" icon="link">
+    Established during the RDP handshake and listed by name in the `MCS Connect Initial` PDU. Each SVC gets a fixed channel ID. Maximum of 30 channels per session. Use for protocol-level features such as clipboard (`cliprdr`), audio (`rdpsnd`), and device redirection (`rdpdr`).
+  </Card>
+  <Card title="Dynamic Virtual Channels (DVC)" icon="bolt">
+    Created on demand through the `DRDYNVC` static channel after the session is active. Unlimited number of DVCs per session. Use for higher-bandwidth features such as the Graphics Pipeline (`rdpgfx`), display updates (`disp`), video (`video`), and camera redirection (`rdpecam`).
+  </Card>
+</CardGroup>
+
+## The Addin Loader
+
+Channel plugins are packaged as shared libraries with a standardised entry-point function. FreeRDP discovers them by resolving the entry-point name from the loaded library at runtime.
+
+### Key Types and Functions
+
+```c
+#include <freerdp/addin.h>
+
+/* Descriptor used internally to identify an addin */
+typedef struct {
+    DWORD dwFlags;
+    CHAR  cName[16];
+    CHAR  cType[16];
+    CHAR  cSubsystem[16];
+} FREERDP_ADDIN;
+
+/* Addin type flags */
+#define FREERDP_ADDIN_CLIENT          0x00000001
+#define FREERDP_ADDIN_SERVER          0x00000002
+#define FREERDP_ADDIN_STATIC          0x00000010  /* built-in / statically linked */
+#define FREERDP_ADDIN_DYNAMIC         0x00000020  /* loaded from a shared library */
+#define FREERDP_ADDIN_CHANNEL_STATIC  0x00001000  /* SVC plugin */
+#define FREERDP_ADDIN_CHANNEL_DYNAMIC 0x00002000  /* DVC plugin */
+#define FREERDP_ADDIN_CHANNEL_DEVICE  0x00004000  /* device sub-plugin (rdpdr) */
+#define FREERDP_ADDIN_CHANNEL_ENTRYEX 0x00008000  /* uses VirtualChannelEntryEx */
+
+/* Load a channel addin by name/subsystem/type */
+PVIRTUALCHANNELENTRY freerdp_load_channel_addin_entry(
+    LPCSTR pszName,       /* e.g. "cliprdr" */
+    LPCSTR pszSubsystem,  /* e.g. "x11" or NULL for first match */
+    LPCSTR pszType,       /* e.g. "client" or NULL */
+    DWORD  dwFlags);
+
+/* Load an addin directly from a file path */
+PVIRTUALCHANNELENTRY freerdp_load_dynamic_addin(
+    LPCSTR pszFileName,
+    LPCSTR pszPath,
+    LPCSTR pszEntryName);
+
+/* Register a custom addin provider (for static linking scenarios) */
+int freerdp_register_addin_provider(
+    FREERDP_LOAD_CHANNEL_ADDIN_ENTRY_FN provider,
+    DWORD dwFlags);
+
+/* Query the install path where dynamic addins are expected */
+LPSTR freerdp_get_dynamic_addin_install_path(void);
+```
+
+## Static Channel Entry Point (SVC)
+
+Every SVC plugin exports a `VirtualChannelEntry` function (or `VirtualChannelEntryEx` for the extended variant). FreeRDP passes an extended entry-points structure that carries the RDP context pointer:
+
+```c
+#include <freerdp/svc.h>
+
+/* Standard entry-point structure passed to VirtualChannelEntry */
+typedef struct {
+    UINT32    cbSize;
+    UINT32    protocolVersion;
+
+    PVIRTUALCHANNELINIT  pVirtualChannelInit;
+    PVIRTUALCHANNELOPEN  pVirtualChannelOpen;
+    PVIRTUALCHANNELCLOSE pVirtualChannelClose;
+    PVIRTUALCHANNELWRITE pVirtualChannelWrite;
+
+    /* FreeRDP extension fields */
+    UINT32      MagicNumber;   /* FREERDP_CHANNEL_MAGIC_NUMBER = 0x46524450 */
+    void*       pExtendedData;
+    void*       pInterface;    /* channel-specific callback interface */
+    rdpContext* context;       /* owning RDP context */
+} CHANNEL_ENTRY_POINTS_FREERDP;
+
+/* The well-known export name FreeRDP resolves */
+#define CHANNEL_EXPORT_FUNC_NAME    "VirtualChannelEntry"
+#define CHANNEL_EXPORT_FUNC_NAME_EX "VirtualChannelEntryEx"
+```
+
+A minimal SVC plugin entry point looks like:
+
+```c
+BOOL VCAPITYPE VirtualChannelEntry(PCHANNEL_ENTRY_POINTS pEntryPoints)
+{
+    CHANNEL_ENTRY_POINTS_FREERDP* ep =
+        (CHANNEL_ENTRY_POINTS_FREERDP*)pEntryPoints;
+
+    /* Initialise, register channel name, hook callbacks */
+    CHANNEL_DEF channel = { "mychan", CHANNEL_OPTION_INITIALIZED };
+    ep->pVirtualChannelInit((PVOID*)&ep->pInterface, &channel, 1,
+                             VIRTUAL_CHANNEL_VERSION_WIN2000,
+                             MyInitEventProc);
+    return TRUE;
+}
+```
+
+## Dynamic Channel Entry Point (DVC)
+
+DVC plugins implement the `IWTSPlugin` interface and are loaded via a `DVCPluginEntry`-compatible function (`PDVC_PLUGIN_ENTRY`). The plugin receives an `IDRDYNVC_ENTRY_POINTS` struct to register itself with the DRDYNVC manager.
+
+```c
+#include <freerdp/dvc.h>
+
+/* Entry-points passed to DVCPluginEntry */
+struct S_IDRDYNVC_ENTRY_POINTS {
+    /* Register the IWTSPlugin with a given name */
+    UINT (*RegisterPlugin)(IDRDYNVC_ENTRY_POINTS* pEntryPoints,
+                            const char*            name,
+                            IWTSPlugin*            pPlugin);
+    /* Retrieve a previously registered plugin by name */
+    IWTSPlugin* (*GetPlugin)(IDRDYNVC_ENTRY_POINTS* pEntryPoints,
+                              const char* name);
+    /* Access the plugin-specific ADDIN_ARGV arguments */
+    const ADDIN_ARGV* (*GetPluginData)(IDRDYNVC_ENTRY_POINTS* pEntryPoints);
+    /* Retrieve the underlying rdpSettings */
+    rdpSettings* (*GetRdpSettings)(IDRDYNVC_ENTRY_POINTS* pEntryPoints);
+    /* Retrieve the owning rdpContext */
+    rdpContext*  (*GetRdpContext)(IDRDYNVC_ENTRY_POINTS* pEntryPoints);
+};
+
+/* DVC plugin entry-point function type */
+typedef UINT (VCAPITYPE* PDVC_PLUGIN_ENTRY)(IDRDYNVC_ENTRY_POINTS*);
+```
+
+### IWTSPlugin Callbacks
+
+When the DRDYNVC transport connects or disconnects, FreeRDP calls into your plugin through these methods:
+
+```c
+struct s_IWTSPlugin {
+    /* First call: create listeners via pChannelMgr->CreateListener() */
+    UINT (*Initialize)(IWTSPlugin* pPlugin,
+                        IWTSVirtualChannelManager* pChannelMgr);
+
+    /* RDC client connected to RD Session Host */
+    UINT (*Connected)(IWTSPlugin* pPlugin);
+
+    /* Client disconnected */
+    UINT (*Disconnected)(IWTSPlugin* pPlugin, DWORD dwDisconnectCode);
+
+    /* Client terminated */
+    UINT (*Terminated)(IWTSPlugin* pPlugin);
+
+    UINT (*Attached)(IWTSPlugin* pPlugin);
+    UINT (*Detached)(IWTSPlugin* pPlugin);
+
+    void* pInterface;  /* implementation-specific callback surface */
+};
+```
+
+### Channel Data Flow
+
+Once a DVC is open, data flows through `IWTSVirtualChannel` and `IWTSVirtualChannelCallback`:
+
+```c
+/* Sending data to the server */
+struct s_IWTSVirtualChannel {
+    UINT (*Write)(IWTSVirtualChannel* pChannel,
+                   ULONG cbSize, const BYTE* pBuffer, void* pReserved);
+    UINT (*Close)(IWTSVirtualChannel* pChannel);
+};
+
+/* Receiving data from the server */
+struct s_IWTSVirtualChannelCallback {
+    UINT (*OnDataReceived)(IWTSVirtualChannelCallback* cb, wStream* data);
+    UINT (*OnOpen)(IWTSVirtualChannelCallback* cb);
+    UINT (*OnClose)(IWTSVirtualChannelCallback* cb);
+    void* pInterface;
+};
+```
+
+## Enabling Channels via Settings
+
+Channels are registered through the `rdpSettings` channel collections **before** `freerdp_connect()`. Both static and dynamic channels accept an `ADDIN_ARGV` argument list analogous to command-line arguments:
+
+```c
+#include <freerdp/settings.h>
+
+rdpSettings* s = instance->context->settings;
+
+/* Enable clipboard SVC */
+ADDIN_ARGV* cliprdr = freerdp_addin_argv_new(1,
+    (const char*[]){"cliprdr"});
+freerdp_static_channel_collection_add(s, cliprdr);
+
+/* Enable audio output SVC */
+ADDIN_ARGV* rdpsnd = freerdp_addin_argv_new(1,
+    (const char*[]){"rdpsnd"});
+freerdp_static_channel_collection_add(s, rdpsnd);
+
+/* Enable Graphics Pipeline DVC with a specific codec hint */
+ADDIN_ARGV* rdpgfx = freerdp_addin_argv_new(1,
+    (const char*[]){"rdpgfx"});
+freerdp_dynamic_channel_collection_add(s, rdpgfx);
+
+/* Enable display control DVC (monitor layout changes) */
+ADDIN_ARGV* disp = freerdp_addin_argv_new(1,
+    (const char*[]){"disp"});
+freerdp_dynamic_channel_collection_add(s, disp);
+```
+
+Alternatively, use the command-line parser which maps `/rdpsnd`, `/clipboard`, `/dynamic-resolution`, etc. directly to the collections:
+
+```bash
+xfreerdp /v:host /clipboard /rdpsnd /rdpgfx /dynamic-resolution
+```
+
+## Built-in Channel Reference
+
+### Static Virtual Channels
+
+| Name | Header | Purpose |
+|---|---|---|
+| `cliprdr` | `channels/cliprdr.h` | Clipboard redirection |
+| `rdpsnd` | `channels/rdpsnd.h` | Audio output (server → client) |
+| `audin` | `channels/audin.h` | Audio input (microphone, client → server) |
+| `rdpdr` | `channels/rdpdr.h` | Device redirection (drives, printers, serial) |
+| `drdynvc` | `channels/drdynvc.h` | Dynamic virtual channel transport |
+| `rail` | `channels/rail.h` | Remote App Integration Layer (RemoteApp) |
+| `encomsp` | `channels/encomsp.h` | Multiparty virtual channel (remote assistance) |
+| `remdesk` | `channels/remdesk.h` | Remote desktop virtual channel |
+| `rdp2tcp` | `channels/rdp2tcp.h` | TCP tunnelling over RDP |
+| `telemetry` | `channels/telemetry.h` | RDP telemetry channel |
+
+### Dynamic Virtual Channels
+
+| Name | Header | Purpose |
+|---|---|---|
+| `rdpgfx` | `channels/rdpgfx.h` | Graphics Pipeline (H.264, RemoteFX progressive) |
+| `disp` | `channels/disp.h` | Display control (resolution changes at runtime) |
+| `video` | `channels/video.h` | Video optimisation channel |
+| `rdpecam` | `channels/rdpecam.h` | Camera device redirection |
+| `rdpei` | `channels/rdpei.h` | Extended input (touch, multitouch) |
+| `rdpemsc` | `channels/rdpemsc.h` | Mouse cursor channel |
+| `rdpewa` | `channels/rdpewa.h` | Extended window attributes |
+| `geometry` | `channels/geometry.h` | Geometry tracking channel |
+| `echo` | `channels/echo.h` | Round-trip latency measurement |
+| `ainput` | `channels/ainput.h` | Advanced input channel |
+| `location` | `channels/location.h` | Geolocation redirection |
+| `scard` | `channels/scard.h` | Smart card redirection |
+| `urbdrc` | `channels/urbdrc.h` | USB device redirection |
+| `tsmf` | `channels/tsmf.h` | Multimedia redirection |
+| `rdpear` | `channels/rdpear.h` | Early authorisation resource |
+
+## Client-Side Channel Context Helpers
+
+The `include/freerdp/client/` headers declare typed context structs for each channel, allowing client code to access channel-specific APIs through the `rdpClientContext`. Each context is populated after the channel connects and the corresponding `OnChannelConnected` event fires.
+
+```c
+#include <freerdp/client/cliprdr.h>   /* CliprdrClientContext  */
+#include <freerdp/client/rdpgfx.h>    /* RdpgfxClientContext   */
+#include <freerdp/client/audin.h>     /* AudinClientContext    */
+#include <freerdp/client/rdpsnd.h>    /* RdpsndClientContext   */
+#include <freerdp/client/rdpei.h>     /* RdpeiClientContext    */
+#include <freerdp/client/disp.h>      /* DispClientContext     */
+#include <freerdp/client/rail.h>      /* RailClientContext     */
+#include <freerdp/client/rdpdr.h>     /* RdpdrClientContext    */
+#include <freerdp/client/drdynvc.h>   /* DrdynvcClientContext  */
+#include <freerdp/client/encomsp.h>   /* EncomspClientContext  */
+#include <freerdp/client/geometry.h>  /* GeometryClientContext */
+#include <freerdp/client/video.h>     /* VideoClientContext    */
+#include <freerdp/client/printer.h>   /* PrinterClientContext  */
+#include <freerdp/client/location.h>  /* LocationClientContext */
+```
+
+The common channel connected/disconnected event handlers in `<freerdp/client.h>` automatically set these context pointers:
+
+```c
+/* Wire up the common event handlers in your PostConnect callback */
+static BOOL my_post_connect(freerdp* instance)
+{
+    rdpContext* ctx = instance->context;
+
+    PubSub_SubscribeChannelConnected(ctx->pubSub,
+        freerdp_client_OnChannelConnectedEventHandler);
+    PubSub_SubscribeChannelDisconnected(ctx->pubSub,
+        freerdp_client_OnChannelDisconnectedEventHandler);
+    return TRUE;
+}
+```
+
+After `rdpgfx` connects, the context pointer is available via the `rdpClientContext` cast:
+
+```c
+rdpClientContext* cctx = (rdpClientContext*)instance->context;
+/* cctx->rdpgfx is now a valid RdpgfxClientContext* */
+```
